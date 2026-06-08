@@ -847,13 +847,13 @@ function App() {
                   <p className="muted-copy">No files uploaded</p>
                 ) : (
                   files.map((file) => (
-                    <article className="file-row" key={file.id}>
+                    <article className="file-row" key={file.id} title={file.original_name}>
                       <FileText aria-hidden="true" size={18} />
                       <span>
                         <strong>{file.original_name}</strong>
                         <small>
                           {formatBytes(file.size)}
-                          {file.openai_file_id ? ' / OpenAI synced' : ''}
+                          {file.openai_file_id ? ' / OpenAI synced' : ' / stored'}
                         </small>
                       </span>
                     </article>

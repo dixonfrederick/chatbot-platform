@@ -309,9 +309,16 @@ label > span {
   gap: 12px;
 }
 
+.sidebar-brand > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
 .sidebar-brand strong,
 .project-item strong,
 .file-row strong {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -323,6 +330,13 @@ label > span {
 .message-meta small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.sidebar-brand span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .new-project-form {
@@ -585,6 +599,7 @@ label > span {
 .file-row span {
   display: grid;
   min-width: 0;
+  gap: 2px;
 }
 
 .spin {
