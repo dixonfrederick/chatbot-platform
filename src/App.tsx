@@ -9,13 +9,14 @@ import {
   LogOut,
   Mail,
   MessageSquare,
+  Paperclip,
   Plus,
   Save,
   Send,
   Settings,
   Trash2,
-  Upload,
   User,
+  X,
 } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -169,6 +170,7 @@ function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('login')
   const [authForm, setAuthForm] = useState({ email: '', name: '', password: '' })
   const [authError, setAuthError] = useState('')
+  const [chatFiles, setChatFiles] = useState<File[]>([])
   const [chatInput, setChatInput] = useState('')
   const [files, setFiles] = useState<FileRecord[]>([])
   const [health, setHealth] = useState<Health | null>(null)
@@ -179,7 +181,7 @@ function App() {
   const [isDetailLoading, setIsDetailLoading] = useState(false)
   const [isSavingPrompt, setIsSavingPrompt] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
-  const [isUploading, setIsUploading] = useState(false)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [newProject, setNewProject] = useState({
     description: '',
@@ -198,7 +200,7 @@ function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaceError, setWorkspaceError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const chatFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || null,
@@ -436,16 +438,37 @@ function App() {
     }
   }
 
+  function addChatFiles(fileList: FileList | File[]) {
+    const nextFiles = Array.from(fileList).filter((file) => file.size <= 10 * 1024 * 1024)
+
+    if (nextFiles.length === 0) {
+      return
+    }
+
+    setChatFiles((current) => {
+      const merged = [...current, ...nextFiles]
+      return merged.slice(0, 5)
+    })
+  }
+
+  function removeChatFile(index: number) {
+    setChatFiles((current) => current.filter((_file, fileIndex) => fileIndex !== index))
+  }
+
   async function handleSendMessage(event: FormEvent) {
     event.preventDefault()
 
-    if (!token || !selectedProject || !chatInput.trim()) {
+    if (!token || !selectedProject || (!chatInput.trim() && chatFiles.length === 0)) {
       return
     }
 
     const outgoing = chatInput.trim()
+    const outgoingFiles = chatFiles
+    const attachmentLine = outgoingFiles.length
+      ? `\n\nAttached: ${outgoingFiles.map((file) => file.name).join(', ')}`
+      : ''
     const optimisticMessage: Message = {
-      content: outgoing,
+      content: `${outgoing || 'Please analyze the attached file.'}${attachmentLine}`,
       created_at: new Date().toISOString(),
       id: -Date.now(),
       model: '',
@@ -456,22 +479,32 @@ function App() {
     }
 
     setChatInput('')
+    setChatFiles([])
     setMessages((current) => [...current, optimisticMessage])
     setIsChatting(true)
     setWorkspaceError('')
 
     try {
-      const result = await api.sendMessage(token, selectedProject.id, outgoing)
+      const result = await api.sendMessage(
+        token,
+        selectedProject.id,
+        outgoing || 'Please analyze the attached file.',
+        outgoingFiles,
+      )
 
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticMessage.id),
         ...result.messages,
       ])
+      if (result.files.length > 0) {
+        setFiles((current) => [...result.files, ...current])
+      }
       setProjects((current) =>
         current.map((project) =>
           project.id === selectedProject.id
             ? {
                 ...project,
+                file_count: (project.file_count || 0) + result.files.length,
                 message_count: (project.message_count || 0) + result.messages.length,
               }
             : project,
@@ -479,37 +512,10 @@ function App() {
       )
     } catch (error) {
       setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id))
+      setChatFiles(outgoingFiles)
       setWorkspaceError(getErrorMessage(error))
     } finally {
       setIsChatting(false)
-    }
-  }
-
-  async function handleUploadFile(file: File | undefined) {
-    if (!file || !token || !selectedProject) {
-      return
-    }
-
-    setIsUploading(true)
-    setWorkspaceError('')
-
-    try {
-      const result = await api.uploadFile(token, selectedProject.id, file)
-      setFiles((current) => [result.file, ...current])
-      setProjects((current) =>
-        current.map((project) =>
-          project.id === selectedProject.id
-            ? { ...project, file_count: (project.file_count || 0) + 1 }
-            : project,
-        ),
-      )
-    } catch (error) {
-      setWorkspaceError(getErrorMessage(error))
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-      setIsUploading(false)
     }
   }
 
@@ -697,17 +703,76 @@ function App() {
               ) : null}
             </div>
 
-            <form className="chat-composer" onSubmit={handleSendMessage}>
-              <textarea
-                onChange={(event) => setChatInput(event.target.value)}
-                placeholder="Ask this agent anything..."
-                rows={2}
-                value={chatInput}
+            <form
+              className={isDraggingFiles ? 'chat-composer dragging' : 'chat-composer'}
+              onDragLeave={(event) => {
+                if (event.currentTarget === event.target) {
+                  setIsDraggingFiles(false)
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                setIsDraggingFiles(true)
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                setIsDraggingFiles(false)
+                addChatFiles(event.dataTransfer.files)
+              }}
+              onSubmit={handleSendMessage}
+            >
+              <input
+                hidden
+                multiple
+                onChange={(event) => {
+                  if (event.target.files) {
+                    addChatFiles(event.target.files)
+                  }
+                  event.currentTarget.value = ''
+                }}
+                ref={chatFileInputRef}
+                type="file"
               />
+              <button
+                aria-label="Attach files"
+                className="icon-button attach-button"
+                onClick={() => chatFileInputRef.current?.click()}
+                title="Attach files"
+                type="button"
+              >
+                <Paperclip aria-hidden="true" size={18} />
+              </button>
+              <div className="composer-main">
+                {chatFiles.length > 0 ? (
+                  <div className="attachment-chips">
+                    {chatFiles.map((file, index) => (
+                      <span className="attachment-chip" key={`${file.name}-${file.lastModified}`}>
+                        <FileText aria-hidden="true" size={15} />
+                        <strong title={file.name}>{file.name}</strong>
+                        <small>{formatBytes(file.size)}</small>
+                        <button
+                          aria-label={`Remove ${file.name}`}
+                          onClick={() => removeChatFile(index)}
+                          title="Remove"
+                          type="button"
+                        >
+                          <X aria-hidden="true" size={14} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <textarea
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Ask this agent anything..."
+                  rows={2}
+                  value={chatInput}
+                />
+              </div>
               <button
                 aria-label="Send message"
                 className="primary send-button"
-                disabled={isChatting || !chatInput.trim()}
+                disabled={isChatting || (!chatInput.trim() && chatFiles.length === 0)}
                 type="submit"
               >
                 <Send aria-hidden="true" size={18} />
@@ -823,25 +888,6 @@ function App() {
                 <FileText aria-hidden="true" size={18} />
                 <h2>Files</h2>
               </div>
-              <input
-                hidden
-                onChange={(event) => handleUploadFile(event.target.files?.[0])}
-                ref={fileInputRef}
-                type="file"
-              />
-              <button
-                className="secondary wide"
-                disabled={isUploading}
-                onClick={() => fileInputRef.current?.click()}
-                type="button"
-              >
-                {isUploading ? (
-                  <Loader2 aria-hidden="true" className="spin" size={18} />
-                ) : (
-                  <Upload aria-hidden="true" size={18} />
-                )}
-                Upload
-              </button>
               <div className="file-list">
                 {files.length === 0 ? (
                   <p className="muted-copy">No files uploaded</p>

@@ -119,6 +119,46 @@ function deleteUploadedFile(file) {
   }
 }
 
+async function persistUploadedFile(projectId, userId, file) {
+  let openaiFileId = ''
+  let uploadError = ''
+
+  try {
+    openaiFileId = (await uploadFileToOpenAI(file.path)) || ''
+  } catch (error) {
+    uploadError = error.message || 'OpenAI upload failed.'
+  }
+
+  const result = db
+    .prepare(
+      `
+        INSERT INTO files (
+          project_id,
+          user_id,
+          original_name,
+          stored_name,
+          mime_type,
+          size,
+          openai_file_id,
+          upload_error
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      projectId,
+      userId,
+      file.originalname,
+      file.filename,
+      file.mimetype,
+      file.size,
+      openaiFileId,
+      uploadError,
+    )
+
+  return db.prepare('SELECT * FROM files WHERE id = ?').get(result.lastInsertRowid)
+}
+
 app.get('/api/health', (_req, res) => {
   const llmStatus = getLlmStatus()
 
@@ -326,13 +366,17 @@ app.get('/api/projects/:projectId/messages', requireAuth, (req, res) => {
   return res.json({ messages: getMessages(projectId, req.user.id) })
 })
 
-app.post('/api/projects/:projectId/chat', requireAuth, async (req, res, next) => {
+app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5), async (req, res, next) => {
   try {
     const projectId = Number(req.params.projectId)
     const project = getProjectForUser(projectId, req.user.id)
-    const message = cleanString(req.body.message)
+    const uploadedFiles = Array.isArray(req.files) ? req.files : []
+    const message =
+      cleanString(req.body.message) ||
+      (uploadedFiles.length > 0 ? 'Please analyze the attached file.' : '')
 
     if (!project) {
+      uploadedFiles.forEach(deleteUploadedFile)
       return res.status(404).json({ error: 'Project not found.' })
     }
 
@@ -342,6 +386,15 @@ app.post('/api/projects/:projectId/chat', requireAuth, async (req, res, next) =>
 
     const history = getMessages(projectId, req.user.id)
     const files = getFiles(projectId, req.user.id)
+    const savedFiles = []
+
+    for (const file of uploadedFiles) {
+      savedFiles.push(await persistUploadedFile(projectId, req.user.id, file))
+    }
+
+    const attachmentLabel = uploadedFiles.length
+      ? `\n\nAttached: ${uploadedFiles.map((file) => file.originalname).join(', ')}`
+      : ''
     const userResult = db
       .prepare(
         `
@@ -349,9 +402,15 @@ app.post('/api/projects/:projectId/chat', requireAuth, async (req, res, next) =>
           VALUES (?, ?, 'user', ?, 'user')
         `,
       )
-      .run(projectId, req.user.id, message)
+      .run(projectId, req.user.id, `${message}${attachmentLabel}`)
 
-    const reply = await createAssistantReply({ project, history, message, files })
+    const reply = await createAssistantReply({
+      attachments: uploadedFiles,
+      files: [...files, ...savedFiles],
+      history,
+      message,
+      project,
+    })
     const assistantResult = db
       .prepare(
         `
@@ -374,6 +433,7 @@ app.post('/api/projects/:projectId/chat', requireAuth, async (req, res, next) =>
         db.prepare('SELECT * FROM messages WHERE id = ?').get(userResult.lastInsertRowid),
         db.prepare('SELECT * FROM messages WHERE id = ?').get(assistantResult.lastInsertRowid),
       ],
+      files: savedFiles,
       provider: reply.provider,
       model: reply.model,
     })
@@ -412,41 +472,7 @@ app.post('/api/projects/:projectId/files', requireAuth, upload.single('file'), a
     return res.status(400).json({ error: 'File is required.' })
   }
 
-  let openaiFileId = ''
-  let uploadError = ''
-
-  try {
-    openaiFileId = (await uploadFileToOpenAI(req.file.path)) || ''
-  } catch (error) {
-    uploadError = error.message || 'OpenAI upload failed.'
-  }
-
-  const result = db
-    .prepare(
-      `
-        INSERT INTO files (
-          project_id,
-          user_id,
-          original_name,
-          stored_name,
-          mime_type,
-          size,
-          openai_file_id,
-          upload_error
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      projectId,
-      req.user.id,
-      req.file.originalname,
-      req.file.filename,
-      req.file.mimetype,
-      req.file.size,
-      openaiFileId,
-      uploadError,
-    )
+  const file = await persistUploadedFile(projectId, req.user.id, req.file)
 
   db.prepare(
     `
@@ -456,7 +482,6 @@ app.post('/api/projects/:projectId/files', requireAuth, upload.single('file'), a
     `,
   ).run(projectId, req.user.id)
 
-  const file = db.prepare('SELECT * FROM files WHERE id = ?').get(result.lastInsertRowid)
   return res.status(201).json({ file })
 })
 

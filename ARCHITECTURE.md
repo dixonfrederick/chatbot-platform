@@ -4,11 +4,11 @@ Agent Desk is a single deployable Node application. During development, Vite ser
 
 ## Components
 
-- React client: Auth flow, project list, prompt editor, file upload, and chat workspace.
+- React client: Auth flow, project list, prompt editor, drag-and-drop chat attachments, and chat workspace.
 - Express API: Request validation, JWT authentication, project ownership checks, chat orchestration, and file upload handling.
 - SQLite database: Users, projects, prompts, messages, and uploaded file metadata.
-- OpenAI adapter: Uses the Responses API for chat and the Files API for uploads when `LLM_PROVIDER=openai`.
-- OpenRouter adapter: Uses OpenRouter's OpenAI-compatible chat completions endpoint when `LLM_PROVIDER=openrouter`.
+- OpenAI adapter: Uses the Responses API for chat and the Files API for upload sync when `LLM_PROVIDER=openai`.
+- OpenRouter adapter: Uses OpenRouter's OpenAI-compatible chat completions endpoint, including text, image, and PDF chat attachments when `LLM_PROVIDER=openrouter`.
 - Demo adapter: Keeps the app usable without provider credentials.
 
 ## Data Model
@@ -17,7 +17,7 @@ Agent Desk is a single deployable Node application. During development, Vite ser
 - `projects`: user-owned agents with description and active `system_prompt`.
 - `prompts`: prompt history associated with a project.
 - `messages`: project chat history with provider/model metadata.
-- `files`: project file metadata plus optional `openai_file_id`.
+- `files`: metadata for files attached through chat or direct upload, plus optional `openai_file_id`.
 
 Every project query is scoped by `user_id`, so users cannot access each other's projects, prompts, messages, or files.
 

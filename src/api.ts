@@ -105,15 +105,31 @@ export const api = {
       method: 'POST',
       token,
     }),
-  sendMessage: (token: string, projectId: number, message: string) =>
-    request<{ messages: Message[]; model: string; provider: string }>(
+  sendMessage: (token: string, projectId: number, message: string, files: File[] = []) => {
+    if (files.length > 0) {
+      const formData = new FormData()
+      formData.append('message', message)
+      files.forEach((file) => formData.append('files', file))
+
+      return request<{ files: FileRecord[]; messages: Message[]; model: string; provider: string }>(
+        `/projects/${projectId}/chat`,
+        {
+          formData,
+          method: 'POST',
+          token,
+        },
+      )
+    }
+
+    return request<{ files: FileRecord[]; messages: Message[]; model: string; provider: string }>(
       `/projects/${projectId}/chat`,
       {
         body: { message },
         method: 'POST',
         token,
       },
-    ),
+    )
+  },
   uploadFile: (token: string, projectId: number, file: File) => {
     const formData = new FormData()
     formData.append('file', file)

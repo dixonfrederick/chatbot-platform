@@ -10,7 +10,8 @@ Minimal full-stack chatbot platform for the Full Stack Developer assignment.
 - Chat UI backed by the OpenAI Responses API when `OPENAI_API_KEY` is set.
 - OpenRouter support for free-model routing with `openrouter/free`.
 - Local demo provider when no OpenAI key is configured.
-- File upload per project, with optional OpenAI Files API sync.
+- Drag-and-drop chat attachments with project file history.
+- Optional OpenAI Files API sync for uploaded files when OpenAI is enabled.
 - SQLite persistence with automatic schema creation.
 
 ## Tech Stack
@@ -107,5 +108,5 @@ This repo includes `render.yaml` for Render Blueprint deployment and a `Dockerfi
 1. Register a user.
 2. Create an agent and enter a system prompt.
 3. Send a chat message.
-4. Upload a file in the project inspector.
+4. Drag a file into the chat composer and ask about it.
 5. Save an updated prompt and send a second chat message.

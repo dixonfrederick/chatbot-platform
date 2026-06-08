@@ -486,15 +486,82 @@ label > span {
 
 .chat-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
+  align-items: end;
   border-top: 1px solid var(--border);
   background: var(--panel);
   padding: 14px 22px;
+  transition:
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.chat-composer.dragging {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 2px rgba(17, 100, 102, 0.28);
 }
 
 .chat-composer textarea {
   max-height: 140px;
+}
+
+.attach-button {
+  width: 46px;
+  min-height: 46px;
+}
+
+.composer-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.attachment-chips {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.attachment-chip {
+  display: inline-grid;
+  max-width: min(100%, 280px);
+  min-height: 30px;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  padding: 4px 5px 4px 9px;
+}
+
+.attachment-chip strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.attachment-chip small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.attachment-chip button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted-strong);
+}
+
+.attachment-chip button:hover {
+  background: var(--border);
+  color: var(--text);
 }
 
 .empty-workspace,
