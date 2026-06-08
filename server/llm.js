@@ -2,7 +2,47 @@ import OpenAI from 'openai'
 import { createReadStream } from 'node:fs'
 import { config } from './config.js'
 
-const openai = config.openaiApiKey ? new OpenAI({ apiKey: config.openaiApiKey }) : null
+const requestedProvider =
+  config.llmProvider ||
+  (config.openRouterApiKey ? 'openrouter' : config.openaiApiKey ? 'openai' : 'demo')
+
+const openai =
+  requestedProvider === 'openai' && config.openaiApiKey
+    ? new OpenAI({ apiKey: config.openaiApiKey })
+    : null
+
+const openRouter =
+  requestedProvider === 'openrouter' && config.openRouterApiKey
+    ? new OpenAI({
+        apiKey: config.openRouterApiKey,
+        baseURL: 'https://openrouter.ai/api/v1',
+        defaultHeaders: {
+          'HTTP-Referer': 'http://localhost:4000',
+          'X-Title': 'Agent Desk',
+        },
+      })
+    : null
+
+export function getLlmStatus() {
+  if (openRouter) {
+    return {
+      model: config.openRouterModel,
+      provider: 'openrouter',
+    }
+  }
+
+  if (openai) {
+    return {
+      model: config.openaiModel,
+      provider: 'openai',
+    }
+  }
+
+  return {
+    model: 'local-demo',
+    provider: 'demo',
+  }
+}
 
 function buildDemoReply({ project, message, files }) {
   const prompt = project.system_prompt
@@ -12,18 +52,22 @@ function buildDemoReply({ project, message, files }) {
     files.length > 0
       ? `I can see ${files.length} file record${files.length === 1 ? '' : 's'} attached to this project.`
       : 'No project files have been attached yet.'
+  const providerNote =
+    requestedProvider === 'openrouter'
+      ? 'Set OPENROUTER_API_KEY to route this endpoint through OpenRouter.'
+      : 'Set OPENAI_API_KEY to route this endpoint through the OpenAI Responses API.'
 
   return [
     'Demo provider response.',
     prompt,
     fileNote,
     `You asked: "${message}".`,
-    'Set OPENAI_API_KEY to route this endpoint through the OpenAI Responses API.',
+    providerNote,
   ].join(' ')
 }
 
 export async function createAssistantReply({ project, history, message, files }) {
-  if (!openai) {
+  if (!openai && !openRouter) {
     return {
       content: buildDemoReply({ project, message, files }),
       provider: 'demo',
@@ -32,7 +76,7 @@ export async function createAssistantReply({ project, history, message, files })
     }
   }
 
-  const input = [
+  const conversation = [
     ...history.slice(-12).map((item) => ({
       role: item.role,
       content: item.content,
@@ -40,6 +84,31 @@ export async function createAssistantReply({ project, history, message, files })
     { role: 'user', content: message },
   ]
 
+  if (openRouter) {
+    const messages = [
+      ...(project.system_prompt
+        ? [{ role: 'system', content: project.system_prompt }]
+        : []),
+      ...conversation,
+    ]
+
+    const response = await openRouter.chat.completions.create({
+      messages,
+      model: config.openRouterModel,
+    })
+    const choice = response.choices?.[0]?.message?.content
+
+    return {
+      content:
+        (typeof choice === 'string' ? choice.trim() : '') ||
+        'The model completed the request but did not return text output.',
+      provider: 'openrouter',
+      model: response.model || config.openRouterModel,
+      responseId: response.id || '',
+    }
+  }
+
+  const input = conversation
   const response = await openai.responses.create({
     model: config.openaiModel,
     instructions: project.system_prompt || undefined,

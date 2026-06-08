@@ -62,6 +62,6 @@ export type ProjectDetail = {
 
 export type Health = {
   ok: boolean
-  provider: 'openai' | 'demo'
+  provider: 'openai' | 'openrouter' | 'demo'
   model: string
 }

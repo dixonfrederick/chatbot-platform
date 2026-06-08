@@ -8,6 +8,7 @@ Minimal full-stack chatbot platform for the Full Stack Developer assignment.
 - Per-user agents/projects with isolated data.
 - Prompt storage and active prompt association per agent.
 - Chat UI backed by the OpenAI Responses API when `OPENAI_API_KEY` is set.
+- OpenRouter support for free-model routing with `openrouter/free`.
 - Local demo provider when no OpenAI key is configured.
 - File upload per project, with optional OpenAI Files API sync.
 - SQLite persistence with automatic schema creation.
@@ -32,11 +33,20 @@ Client: `http://127.0.0.1:5173`
 
 API: `http://localhost:4000`
 
-The app runs without an API key by using the local demo provider. To enable real model calls, set:
+The app runs without an API key by using the local demo provider. To enable OpenAI model calls, set:
 
 ```bash
+LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-your-key
 OPENAI_MODEL=gpt-5-mini
+```
+
+To use OpenRouter's free model router instead:
+
+```bash
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-your-key
+OPENROUTER_MODEL=openrouter/free
 ```
 
 ## Production Build
@@ -55,8 +65,11 @@ After build, Express serves the Vite `dist` folder and the API from the same pro
 | `PORT` | No | `4000` | Express server port |
 | `JWT_SECRET` | Yes in production | local dev secret | Token signing secret |
 | `DB_PATH` | No | `./data/app.db` | SQLite database path |
+| `LLM_PROVIDER` | No | auto-detects keys or `demo` | `demo`, `openai`, or `openrouter` |
 | `OPENAI_API_KEY` | No | empty | Enables OpenAI Responses and Files APIs |
 | `OPENAI_MODEL` | No | `gpt-5-mini` | Model used for chat responses |
+| `OPENROUTER_API_KEY` | No | empty | Enables OpenRouter chat completions |
+| `OPENROUTER_MODEL` | No | `openrouter/free` | OpenRouter model or free router |
 | `CLIENT_ORIGIN` | No | `http://localhost:5173` | Dev CORS origin |
 
 ## API Summary
@@ -85,7 +98,7 @@ Recommended settings:
 - Start command: `npm start`
 - Add persistent disk or use a managed database if chat data must survive redeploys.
 - Set `JWT_SECRET`.
-- Set `OPENAI_API_KEY` for real LLM responses.
+- Set either `OPENAI_API_KEY` or `OPENROUTER_API_KEY` for real LLM responses.
 
 This repo includes `render.yaml` for Render Blueprint deployment and a `Dockerfile` for container hosts such as Fly.io.
 

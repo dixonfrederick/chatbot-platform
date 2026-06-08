@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { config, isProduction } from './config.js'
 import { db } from './db.js'
 import { publicUser, requireAuth, signToken } from './auth.js'
-import { createAssistantReply, uploadFileToOpenAI } from './llm.js'
+import { createAssistantReply, getLlmStatus, uploadFileToOpenAI } from './llm.js'
 
 const app = express()
 
@@ -120,10 +120,12 @@ function deleteUploadedFile(file) {
 }
 
 app.get('/api/health', (_req, res) => {
+  const llmStatus = getLlmStatus()
+
   res.json({
     ok: true,
-    provider: config.openaiApiKey ? 'openai' : 'demo',
-    model: config.openaiApiKey ? config.openaiModel : 'local-demo',
+    provider: llmStatus.provider,
+    model: llmStatus.model,
   })
 })
 
@@ -376,7 +378,7 @@ app.post('/api/projects/:projectId/chat', requireAuth, async (req, res, next) =>
       model: reply.model,
     })
   } catch (error) {
-    if (config.openaiApiKey) {
+    if (getLlmStatus().provider !== 'demo') {
       return res.status(502).json({
         error: 'The LLM provider could not complete the request.',
         detail: error.message,

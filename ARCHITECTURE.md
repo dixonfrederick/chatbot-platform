@@ -7,7 +7,8 @@ Agent Desk is a single deployable Node application. During development, Vite ser
 - React client: Auth flow, project list, prompt editor, file upload, and chat workspace.
 - Express API: Request validation, JWT authentication, project ownership checks, chat orchestration, and file upload handling.
 - SQLite database: Users, projects, prompts, messages, and uploaded file metadata.
-- OpenAI adapter: Uses the Responses API for chat and the Files API for uploads when `OPENAI_API_KEY` is configured.
+- OpenAI adapter: Uses the Responses API for chat and the Files API for uploads when `LLM_PROVIDER=openai`.
+- OpenRouter adapter: Uses OpenRouter's OpenAI-compatible chat completions endpoint when `LLM_PROVIDER=openrouter`.
 - Demo adapter: Keeps the app usable without provider credentials.
 
 ## Data Model
@@ -32,7 +33,7 @@ Every project query is scoped by `user_id`, so users cannot access each other's 
 
 ## Extensibility
 
-The LLM provider is isolated in `server/llm.js`, so OpenRouter, Anthropic, analytics, retrieval, or tracing can be added without changing route ownership checks or UI state shape. SQLite can be replaced by Postgres by keeping the same route contracts and data model.
+The LLM provider is isolated in `server/llm.js`, so additional providers, analytics, retrieval, or tracing can be added without changing route ownership checks or UI state shape. SQLite can be replaced by Postgres by keeping the same route contracts and data model.
 
 ## Reliability And Performance
 
