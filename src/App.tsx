@@ -9,11 +9,13 @@ import {
   LogOut,
   Mail,
   MessageSquare,
+  Moon,
   Paperclip,
   Plus,
   Save,
   Send,
   Settings,
+  Sun,
   Trash2,
   User,
   X,
@@ -24,8 +26,10 @@ import { ApiError, api } from './api'
 import type { FileRecord, Health, Message, Project, Prompt, User as AuthUser } from './types'
 
 const TOKEN_KEY = 'chatbot_platform_token'
+const THEME_KEY = 'chatbot_platform_theme'
 
 type AuthMode = 'login' | 'register'
+type ThemeMode = 'dark' | 'light'
 
 function getErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
@@ -59,6 +63,8 @@ function AuthScreen({
   onChange,
   onModeChange,
   onSubmit,
+  onToggleTheme,
+  theme,
 }: {
   authError: string
   authForm: { email: string; name: string; password: string }
@@ -67,10 +73,25 @@ function AuthScreen({
   onChange: (field: 'email' | 'name' | 'password', value: string) => void
   onModeChange: (mode: AuthMode) => void
   onSubmit: (event: FormEvent) => void
+  onToggleTheme: () => void
+  theme: ThemeMode
 }) {
   return (
     <main className="auth-shell">
       <section className="auth-panel">
+        <button
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          className="icon-button auth-theme-toggle"
+          onClick={onToggleTheme}
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          type="button"
+        >
+          {theme === 'dark' ? (
+            <Sun aria-hidden="true" size={18} />
+          ) : (
+            <Moon aria-hidden="true" size={18} />
+          )}
+        </button>
         <div className="brand-mark">
           <Bot aria-hidden="true" size={28} />
         </div>
@@ -197,6 +218,15 @@ function App() {
     description: '',
     name: '',
   })
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const storedTheme = localStorage.getItem(THEME_KEY)
+
+    if (storedTheme === 'dark' || storedTheme === 'light') {
+      return storedTheme
+    }
+
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaceError, setWorkspaceError] = useState('')
@@ -206,6 +236,11 @@ function App() {
     () => projects.find((project) => project.id === selectedProjectId) || null,
     [projects, selectedProjectId],
   )
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem(THEME_KEY, theme)
+  }, [theme])
 
   useEffect(() => {
     api
@@ -558,6 +593,8 @@ function App() {
         }
         onModeChange={setAuthMode}
         onSubmit={handleAuthSubmit}
+        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+        theme={theme}
       />
     )
   }
@@ -649,6 +686,19 @@ function App() {
           </div>
           <div className="account-menu">
             <span>{user.name}</span>
+            <button
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              className="icon-button"
+              onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              type="button"
+            >
+              {theme === 'dark' ? (
+                <Sun aria-hidden="true" size={18} />
+              ) : (
+                <Moon aria-hidden="true" size={18} />
+              )}
+            </button>
             <button aria-label="Logout" className="icon-button" onClick={handleLogout} type="button">
               <LogOut aria-hidden="true" size={18} />
             </button>

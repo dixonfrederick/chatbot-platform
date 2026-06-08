@@ -4,6 +4,7 @@
   --panel-soft: #f8fafc;
   --border: #d9e1ea;
   --border-strong: #b7c4d1;
+  --control-bg: #ffffff;
   --text: #17202a;
   --muted: #657386;
   --muted-strong: #475569;
@@ -14,10 +15,16 @@
   --amber: #b7791f;
   --danger: #b42318;
   --danger-soft: #fff1f0;
+  --topbar-bg: rgba(255, 255, 255, 0.84);
+  --user-message-bg: #edf5ff;
+  --user-message-border: #b9d4ff;
+  --chip-hover: #d9e1ea;
   --shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+  --message-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
   --radius: 8px;
   --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font: 15px/1.45 var(--font);
@@ -28,11 +35,39 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+[data-theme='dark'] {
+  --bg: #111827;
+  --panel: #17202b;
+  --panel-soft: #1f2937;
+  --border: #314154;
+  --border-strong: #526579;
+  --control-bg: #0f1722;
+  --text: #f3f6fa;
+  --muted: #a1adbd;
+  --muted-strong: #c3cbd6;
+  --primary: #2dd4bf;
+  --primary-dark: #14b8a6;
+  --primary-soft: #123f3c;
+  --blue: #60a5fa;
+  --amber: #fbbf24;
+  --danger: #f87171;
+  --danger-soft: #3b1b1f;
+  --topbar-bg: rgba(23, 32, 43, 0.88);
+  --user-message-bg: #123556;
+  --user-message-border: #2563a8;
+  --chip-hover: #314154;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+  --message-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
+  background: var(--bg);
   margin: 0;
   min-width: 320px;
 }
@@ -77,7 +112,7 @@ textarea {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--control-bg);
   color: var(--text);
   outline: none;
   padding: 10px 11px;
@@ -117,6 +152,7 @@ label > span {
 }
 
 .auth-panel {
+  position: relative;
   display: grid;
   width: min(440px, 100%);
   gap: 20px;
@@ -125,6 +161,12 @@ label > span {
   background: var(--panel);
   box-shadow: var(--shadow);
   padding: 28px;
+}
+
+.auth-theme-toggle {
+  position: absolute;
+  right: 18px;
+  top: 18px;
 }
 
 .brand-mark {
@@ -190,7 +232,7 @@ label > span {
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--control-bg);
   padding-left: 10px;
 }
 
@@ -229,7 +271,7 @@ label > span {
 
 .secondary {
   border: 1px solid var(--border-strong);
-  background: #fff;
+  background: var(--control-bg);
   color: var(--text);
 }
 
@@ -247,7 +289,7 @@ label > span {
 .icon-button {
   width: 38px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--control-bg);
   color: var(--muted-strong);
 }
 
@@ -398,7 +440,7 @@ label > span {
   justify-content: space-between;
   gap: 18px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--topbar-bg);
   padding: 18px 22px;
 }
 
@@ -451,13 +493,13 @@ label > span {
   border-radius: var(--radius);
   background: var(--panel);
   padding: 13px 14px;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+  box-shadow: var(--message-shadow);
 }
 
 .message.user {
   align-self: flex-end;
-  border-color: #b9d4ff;
-  background: #edf5ff;
+  border-color: var(--user-message-border);
+  background: var(--user-message-bg);
 }
 
 .message.assistant {
@@ -560,7 +602,7 @@ label > span {
 }
 
 .attachment-chip button:hover {
-  background: var(--border);
+  background: var(--chip-hover);
   color: var(--text);
 }
 
