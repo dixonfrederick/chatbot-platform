@@ -1,0 +1,126 @@
+import type {
+  AuthResponse,
+  FileRecord,
+  Health,
+  Message,
+  Project,
+  ProjectDetail,
+  Prompt,
+  User,
+} from './types'
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+
+type RequestOptions = {
+  body?: unknown
+  formData?: FormData
+  method?: string
+  token?: string
+}
+
+export class ApiError extends Error {
+  detail?: string
+  status: number
+
+  constructor(message: string, status: number, detail?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {}
+
+  if (options.token) {
+    headers.Authorization = `Bearer ${options.token}`
+  }
+
+  let body: BodyInit | undefined
+
+  if (options.formData) {
+    body = options.formData
+  } else if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    body,
+    headers,
+    method: options.method || 'GET',
+  })
+
+  if (response.status === 204) {
+    return undefined as T
+  }
+
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new ApiError(
+      payload.error || 'Request failed.',
+      response.status,
+      payload.detail,
+    )
+  }
+
+  return payload as T
+}
+
+export const api = {
+  health: () => request<Health>('/health'),
+  login: (body: { email: string; password: string }) =>
+    request<AuthResponse>('/auth/login', { body, method: 'POST' }),
+  register: (body: { email: string; name: string; password: string }) =>
+    request<AuthResponse>('/auth/register', { body, method: 'POST' }),
+  me: (token: string) => request<{ user: User }>('/auth/me', { token }),
+  projects: (token: string) => request<{ projects: Project[] }>('/projects', { token }),
+  createProject: (
+    token: string,
+    body: { description: string; name: string; system_prompt: string },
+  ) => request<{ project: Project }>('/projects', { body, method: 'POST', token }),
+  projectDetail: (token: string, projectId: number) =>
+    request<ProjectDetail>(`/projects/${projectId}`, { token }),
+  updateProject: (
+    token: string,
+    projectId: number,
+    body: { description: string; name: string; system_prompt: string },
+  ) =>
+    request<{ project: Project }>(`/projects/${projectId}`, {
+      body,
+      method: 'PATCH',
+      token,
+    }),
+  deleteProject: (token: string, projectId: number) =>
+    request<void>(`/projects/${projectId}`, { method: 'DELETE', token }),
+  savePrompt: (
+    token: string,
+    projectId: number,
+    body: { content: string; title: string },
+  ) =>
+    request<{ project: Project; prompt: Prompt }>(`/projects/${projectId}/prompts`, {
+      body,
+      method: 'POST',
+      token,
+    }),
+  sendMessage: (token: string, projectId: number, message: string) =>
+    request<{ messages: Message[]; model: string; provider: string }>(
+      `/projects/${projectId}/chat`,
+      {
+        body: { message },
+        method: 'POST',
+        token,
+      },
+    ),
+  uploadFile: (token: string, projectId: number, file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request<{ file: FileRecord }>(`/projects/${projectId}/files`, {
+      formData,
+      method: 'POST',
+      token,
+    })
+  },
+}

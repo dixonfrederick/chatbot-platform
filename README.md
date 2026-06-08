@@ -1,0 +1,96 @@
+# Agent Desk
+
+Minimal full-stack chatbot platform for the Full Stack Developer assignment.
+
+## Features
+
+- JWT authentication with registration and login.
+- Per-user agents/projects with isolated data.
+- Prompt storage and active prompt association per agent.
+- Chat UI backed by the OpenAI Responses API when `OPENAI_API_KEY` is set.
+- Local demo provider when no OpenAI key is configured.
+- File upload per project, with optional OpenAI Files API sync.
+- SQLite persistence with automatic schema creation.
+
+## Tech Stack
+
+- React, TypeScript, Vite
+- Express
+- SQLite via `better-sqlite3`
+- JWT and bcrypt password hashing
+- OpenAI Node SDK
+
+## Local Setup
+
+```bash
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Client: `http://127.0.0.1:5173`
+
+API: `http://localhost:4000`
+
+The app runs without an API key by using the local demo provider. To enable real model calls, set:
+
+```bash
+OPENAI_API_KEY=sk-your-key
+OPENAI_MODEL=gpt-5-mini
+```
+
+## Production Build
+
+```bash
+npm run build
+npm start
+```
+
+After build, Express serves the Vite `dist` folder and the API from the same process.
+
+## Environment
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `PORT` | No | `4000` | Express server port |
+| `JWT_SECRET` | Yes in production | local dev secret | Token signing secret |
+| `DB_PATH` | No | `./data/app.db` | SQLite database path |
+| `OPENAI_API_KEY` | No | empty | Enables OpenAI Responses and Files APIs |
+| `OPENAI_MODEL` | No | `gpt-5-mini` | Model used for chat responses |
+| `CLIENT_ORIGIN` | No | `http://localhost:5173` | Dev CORS origin |
+
+## API Summary
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/:projectId`
+- `PATCH /api/projects/:projectId`
+- `DELETE /api/projects/:projectId`
+- `POST /api/projects/:projectId/prompts`
+- `GET /api/projects/:projectId/messages`
+- `POST /api/projects/:projectId/chat`
+- `GET /api/projects/:projectId/files`
+- `POST /api/projects/:projectId/files`
+
+## Deployment Notes
+
+The app is deployable as one Node service on Render, Railway, Fly.io, or a VPS.
+
+Recommended settings:
+
+- Build command: `npm install && npm run build`
+- Start command: `npm start`
+- Add persistent disk or use a managed database if chat data must survive redeploys.
+- Set `JWT_SECRET`.
+- Set `OPENAI_API_KEY` for real LLM responses.
+
+## Demo Script
+
+1. Register a user.
+2. Create an agent and enter a system prompt.
+3. Send a chat message.
+4. Upload a file in the project inspector.
+5. Save an updated prompt and send a second chat message.
