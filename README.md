@@ -87,6 +87,8 @@ Recommended settings:
 - Set `JWT_SECRET`.
 - Set `OPENAI_API_KEY` for real LLM responses.
 
+This repo includes `render.yaml` for Render Blueprint deployment and a `Dockerfile` for container hosts such as Fly.io.
+
 ## Demo Script
 
 1. Register a user.
