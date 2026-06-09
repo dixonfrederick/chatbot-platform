@@ -1,4 +1,4 @@
-# Agent Desk
+# Chatbot YellowAI Dixon
 
 Minimal full-stack chatbot platform for the Full Stack Developer assignment.
 
@@ -8,7 +8,7 @@ Minimal full-stack chatbot platform for the Full Stack Developer assignment.
 - Per-user agents/projects with isolated data.
 - Prompt storage and active prompt association per agent.
 - Chat UI backed by the OpenAI Responses API when `OPENAI_API_KEY` is set.
-- OpenRouter support for free-model routing with `openrouter/free`.
+- OpenRouter support with a configured free model.
 - Local demo provider when no OpenAI key is configured.
 - Drag-and-drop chat attachments with project file history.
 - Optional OpenAI Files API sync for uploaded files when OpenAI is enabled.
@@ -48,7 +48,7 @@ To use OpenRouter's free model router instead:
 ```bash
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-your-key
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
 ```
 
 ## Production Build
@@ -72,7 +72,7 @@ After build, Express serves the Vite `dist` folder and the API from the same pro
 | `OPENAI_API_KEY` | No | empty | Enables OpenAI Responses and Files APIs |
 | `OPENAI_MODEL` | No | `gpt-5-mini` | Model used for chat responses |
 | `OPENROUTER_API_KEY` | No | empty | Enables OpenRouter chat completions |
-| `OPENROUTER_MODEL` | No | `openrouter/free` | OpenRouter model or free router |
+| `OPENROUTER_MODEL` | No | `openai/gpt-oss-20b:free` | OpenRouter model |
 | `CLIENT_ORIGIN` | No | `http://localhost:5173` | Dev CORS origin |
 
 ## API Summary

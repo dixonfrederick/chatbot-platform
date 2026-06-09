@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: chatbot-platform
+    name: chatbot-yellowai-dixon
     env: node
     plan: free
     buildCommand: npm ci && npm run build
@@ -17,10 +17,10 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: openrouter/free
+        value: openai/gpt-oss-20b:free
       - key: OPENROUTER_API_KEY
         sync: false
     disks:
-      - name: chatbot-platform-data
+      - name: chatbot-yellowai-dixon-data
         mountPath: /opt/render/project/src/data
         sizeGB: 1

@@ -6,7 +6,7 @@ dotenv.config({ quiet: true })
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dataDir = process.env.VERCEL
-  ? path.resolve('/tmp/chatbot-platform')
+  ? path.resolve('/tmp/chatbot-yellowai-dixon')
   : path.resolve(rootDir, 'data')
 
 export const config = {
@@ -22,7 +22,7 @@ export const config = {
   openaiApiKey: process.env.OPENAI_API_KEY || '',
   openaiModel: process.env.OPENAI_MODEL || 'gpt-5-mini',
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
-  openRouterModel: process.env.OPENROUTER_MODEL || 'openrouter/free',
+  openRouterModel: process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
   port: Number(process.env.PORT || 4000),
 }
 

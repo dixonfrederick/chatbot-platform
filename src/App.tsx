@@ -96,7 +96,7 @@ function AuthScreen({
           <Bot aria-hidden="true" size={28} />
         </div>
         <div>
-          <p className="eyebrow">Agent Desk</p>
+          <p className="eyebrow">Chatbot YellowAI Dixon</p>
           <h1>{authMode === 'login' ? 'Sign in' : 'Create account'}</h1>
         </div>
         <div className="segmented" role="tablist" aria-label="Authentication mode">
@@ -607,7 +607,7 @@ function App() {
             <Bot aria-hidden="true" size={24} />
           </div>
           <div>
-            <strong>Agent Desk</strong>
+            <strong>Chatbot YellowAI Dixon</strong>
             <span>{health ? `${health.provider} / ${health.model}` : 'checking provider'}</span>
           </div>
         </div>

@@ -19,7 +19,7 @@ const openRouter =
         baseURL: 'https://openrouter.ai/api/v1',
         defaultHeaders: {
           'HTTP-Referer': 'http://localhost:4000',
-          'X-Title': 'Agent Desk',
+          'X-Title': 'Chatbot YellowAI Dixon',
         },
       })
     : null

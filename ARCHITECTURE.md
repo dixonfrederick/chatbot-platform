@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Desk is a single deployable Node application. During development, Vite serves the React client and proxies `/api` to Express. In production, Express serves both the built static client and the JSON API.
+Chatbot YellowAI Dixon is a single deployable Node application. During development, Vite serves the React client and proxies `/api` to Express. In production, Express serves both the built static client and the JSON API.
 
 ## Components
 
