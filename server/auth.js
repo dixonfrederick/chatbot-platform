@@ -23,7 +23,7 @@ export function signToken(user) {
   )
 }
 
-export function requireAuth(req, res, next) {
+export async function requireAuth(req, res, next) {
   const header = req.get('authorization') || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''
 
@@ -34,9 +34,9 @@ export function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, config.jwtSecret)
     const userId = Number(payload.sub)
-    const user = db
-      .prepare('SELECT id, name, email, created_at FROM users WHERE id = ?')
-      .get(userId)
+    const user = await db.get('SELECT id, name, email, created_at FROM users WHERE id = ?', [
+      userId,
+    ])
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid session.' })

@@ -51,16 +51,13 @@ function cleanString(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function getProjectForUser(projectId, userId) {
-  return db
-    .prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?')
-    .get(projectId, userId)
+async function getProjectForUser(projectId, userId) {
+  return db.get('SELECT * FROM projects WHERE id = ? AND user_id = ?', [projectId, userId])
 }
 
-function projectSummaryRows(userId) {
-  return db
-    .prepare(
-      `
+async function projectSummaryRows(userId) {
+  return db.all(
+    `
         SELECT
           p.*,
           (SELECT COUNT(*) FROM messages m WHERE m.project_id = p.id) AS message_count,
@@ -70,47 +67,44 @@ function projectSummaryRows(userId) {
         WHERE p.user_id = ?
         ORDER BY p.updated_at DESC, p.id DESC
       `,
-    )
-    .all(userId)
+    [userId],
+  )
 }
 
-function getMessages(projectId, userId) {
-  return db
-    .prepare(
-      `
+async function getMessages(projectId, userId) {
+  return db.all(
+    `
         SELECT id, project_id, role, content, provider, model, response_id, created_at
         FROM messages
         WHERE project_id = ? AND user_id = ?
         ORDER BY id ASC
       `,
-    )
-    .all(projectId, userId)
+    [projectId, userId],
+  )
 }
 
-function getFiles(projectId, userId) {
-  return db
-    .prepare(
-      `
+async function getFiles(projectId, userId) {
+  return db.all(
+    `
         SELECT id, project_id, original_name, mime_type, size, openai_file_id, upload_error, created_at
         FROM files
         WHERE project_id = ? AND user_id = ?
         ORDER BY id DESC
       `,
-    )
-    .all(projectId, userId)
+    [projectId, userId],
+  )
 }
 
-function getPrompts(projectId, userId) {
-  return db
-    .prepare(
-      `
+async function getPrompts(projectId, userId) {
+  return db.all(
+    `
         SELECT id, project_id, title, content, created_at
         FROM prompts
         WHERE project_id = ? AND user_id = ?
         ORDER BY id DESC
       `,
-    )
-    .all(projectId, userId)
+    [projectId, userId],
+  )
 }
 
 function deleteUploadedFile(file) {
@@ -129,9 +123,8 @@ async function persistUploadedFile(projectId, userId, file) {
     uploadError = error.message || 'OpenAI upload failed.'
   }
 
-  const result = db
-    .prepare(
-      `
+  const result = await db.run(
+    `
         INSERT INTO files (
           project_id,
           user_id,
@@ -144,8 +137,7 @@ async function persistUploadedFile(projectId, userId, file) {
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-    )
-    .run(
+    [
       projectId,
       userId,
       file.originalname,
@@ -154,9 +146,10 @@ async function persistUploadedFile(projectId, userId, file) {
       file.size,
       openaiFileId,
       uploadError,
-    )
+    ],
+  )
 
-  return db.prepare('SELECT * FROM files WHERE id = ?').get(result.lastInsertRowid)
+  return db.get('SELECT * FROM files WHERE id = ?', [result.lastInsertRowid])
 }
 
 app.get('/api/health', (_req, res) => {
@@ -182,17 +175,19 @@ app.post('/api/auth/register', async (req, res, next) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12)
-    const result = db
-      .prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)')
-      .run(name, email, passwordHash)
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid)
+    const result = await db.run('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)', [
+      name,
+      email,
+      passwordHash,
+    ])
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [result.lastInsertRowid])
 
     return res.status(201).json({
       token: signToken(user),
       user: publicUser(user),
     })
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.code === '23505') {
       return res.status(409).json({ error: 'An account already exists for that email.' })
     }
     return next(error)
@@ -203,7 +198,7 @@ app.post('/api/auth/login', async (req, res, next) => {
   try {
     const email = cleanString(req.body.email).toLowerCase()
     const password = cleanString(req.body.password)
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email)
+    const user = await db.get('SELECT * FROM users WHERE email = ?', [email])
 
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'Invalid email or password.' })
@@ -222,11 +217,11 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: req.user })
 })
 
-app.get('/api/projects', requireAuth, (req, res) => {
-  res.json({ projects: projectSummaryRows(req.user.id) })
+app.get('/api/projects', requireAuth, async (req, res) => {
+  res.json({ projects: await projectSummaryRows(req.user.id) })
 })
 
-app.post('/api/projects', requireAuth, (req, res) => {
+app.post('/api/projects', requireAuth, async (req, res) => {
   const name = cleanString(req.body.name)
   const description = cleanString(req.body.description)
   const systemPrompt = cleanString(req.body.system_prompt)
@@ -235,31 +230,31 @@ app.post('/api/projects', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Project name is required.' })
   }
 
-  const result = db
-    .prepare(
-      `
+  const result = await db.run(
+    `
         INSERT INTO projects (user_id, name, description, system_prompt)
         VALUES (?, ?, ?, ?)
       `,
-    )
-    .run(req.user.id, name, description, systemPrompt)
+    [req.user.id, name, description, systemPrompt],
+  )
 
   if (systemPrompt) {
-    db.prepare(
+    await db.run(
       `
         INSERT INTO prompts (project_id, user_id, title, content)
         VALUES (?, ?, ?, ?)
       `,
-    ).run(result.lastInsertRowid, req.user.id, 'Initial prompt', systemPrompt)
+      [result.lastInsertRowid, req.user.id, 'Initial prompt', systemPrompt],
+    )
   }
 
-  const project = getProjectForUser(result.lastInsertRowid, req.user.id)
+  const project = await getProjectForUser(result.lastInsertRowid, req.user.id)
   return res.status(201).json({ project })
 })
 
-app.get('/api/projects/:projectId', requireAuth, (req, res) => {
+app.get('/api/projects/:projectId', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const project = getProjectForUser(projectId, req.user.id)
+  const project = await getProjectForUser(projectId, req.user.id)
 
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' })
@@ -267,15 +262,15 @@ app.get('/api/projects/:projectId', requireAuth, (req, res) => {
 
   return res.json({
     project,
-    prompts: getPrompts(projectId, req.user.id),
-    files: getFiles(projectId, req.user.id),
-    messages: getMessages(projectId, req.user.id),
+    prompts: await getPrompts(projectId, req.user.id),
+    files: await getFiles(projectId, req.user.id),
+    messages: await getMessages(projectId, req.user.id),
   })
 })
 
-app.patch('/api/projects/:projectId', requireAuth, (req, res) => {
+app.patch('/api/projects/:projectId', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const current = getProjectForUser(projectId, req.user.id)
+  const current = await getProjectForUser(projectId, req.user.id)
 
   if (!current) {
     return res.status(404).json({ error: 'Project not found.' })
@@ -293,32 +288,33 @@ app.patch('/api/projects/:projectId', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Project name is required.' })
   }
 
-  db.prepare(
+  await db.run(
     `
       UPDATE projects
       SET name = ?, description = ?, system_prompt = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `,
-  ).run(name, description, systemPrompt, projectId, req.user.id)
+    [name, description, systemPrompt, projectId, req.user.id],
+  )
 
-  return res.json({ project: getProjectForUser(projectId, req.user.id) })
+  return res.json({ project: await getProjectForUser(projectId, req.user.id) })
 })
 
-app.delete('/api/projects/:projectId', requireAuth, (req, res) => {
+app.delete('/api/projects/:projectId', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const project = getProjectForUser(projectId, req.user.id)
+  const project = await getProjectForUser(projectId, req.user.id)
 
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' })
   }
 
-  db.prepare('DELETE FROM projects WHERE id = ? AND user_id = ?').run(projectId, req.user.id)
+  await db.run('DELETE FROM projects WHERE id = ? AND user_id = ?', [projectId, req.user.id])
   return res.status(204).send()
 })
 
-app.post('/api/projects/:projectId/prompts', requireAuth, (req, res) => {
+app.post('/api/projects/:projectId/prompts', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const project = getProjectForUser(projectId, req.user.id)
+  const project = await getProjectForUser(projectId, req.user.id)
   const title = cleanString(req.body.title) || 'Prompt'
   const content = cleanString(req.body.content)
 
@@ -330,46 +326,46 @@ app.post('/api/projects/:projectId/prompts', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Prompt content is required.' })
   }
 
-  const result = db
-    .prepare(
-      `
+  const result = await db.run(
+    `
         INSERT INTO prompts (project_id, user_id, title, content)
         VALUES (?, ?, ?, ?)
       `,
-    )
-    .run(projectId, req.user.id, title, content)
+    [projectId, req.user.id, title, content],
+  )
 
-  db.prepare(
+  await db.run(
     `
       UPDATE projects
       SET system_prompt = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `,
-  ).run(content, projectId, req.user.id)
+    [content, projectId, req.user.id],
+  )
 
-  const prompt = db.prepare('SELECT * FROM prompts WHERE id = ?').get(result.lastInsertRowid)
+  const prompt = await db.get('SELECT * FROM prompts WHERE id = ?', [result.lastInsertRowid])
 
   return res.status(201).json({
     prompt,
-    project: getProjectForUser(projectId, req.user.id),
+    project: await getProjectForUser(projectId, req.user.id),
   })
 })
 
-app.get('/api/projects/:projectId/messages', requireAuth, (req, res) => {
+app.get('/api/projects/:projectId/messages', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const project = getProjectForUser(projectId, req.user.id)
+  const project = await getProjectForUser(projectId, req.user.id)
 
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' })
   }
 
-  return res.json({ messages: getMessages(projectId, req.user.id) })
+  return res.json({ messages: await getMessages(projectId, req.user.id) })
 })
 
 app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5), async (req, res, next) => {
   try {
     const projectId = Number(req.params.projectId)
-    const project = getProjectForUser(projectId, req.user.id)
+    const project = await getProjectForUser(projectId, req.user.id)
     const uploadedFiles = Array.isArray(req.files) ? req.files : []
     const message =
       cleanString(req.body.message) ||
@@ -384,8 +380,8 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
       return res.status(400).json({ error: 'Message is required.' })
     }
 
-    const history = getMessages(projectId, req.user.id)
-    const files = getFiles(projectId, req.user.id)
+    const history = await getMessages(projectId, req.user.id)
+    const files = await getFiles(projectId, req.user.id)
     const savedFiles = []
 
     for (const file of uploadedFiles) {
@@ -395,14 +391,13 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
     const attachmentLabel = uploadedFiles.length
       ? `\n\nAttached: ${uploadedFiles.map((file) => file.originalname).join(', ')}`
       : ''
-    const userResult = db
-      .prepare(
-        `
+    const userResult = await db.run(
+      `
           INSERT INTO messages (project_id, user_id, role, content, provider)
           VALUES (?, ?, 'user', ?, 'user')
         `,
-      )
-      .run(projectId, req.user.id, `${message}${attachmentLabel}`)
+      [projectId, req.user.id, `${message}${attachmentLabel}`],
+    )
 
     const reply = await createAssistantReply({
       attachments: uploadedFiles,
@@ -411,27 +406,27 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
       message,
       project,
     })
-    const assistantResult = db
-      .prepare(
-        `
+    const assistantResult = await db.run(
+      `
           INSERT INTO messages (project_id, user_id, role, content, provider, model, response_id)
           VALUES (?, ?, 'assistant', ?, ?, ?, ?)
         `,
-      )
-      .run(projectId, req.user.id, reply.content, reply.provider, reply.model, reply.responseId)
+      [projectId, req.user.id, reply.content, reply.provider, reply.model, reply.responseId],
+    )
 
-    db.prepare(
+    await db.run(
       `
         UPDATE projects
         SET updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND user_id = ?
       `,
-    ).run(projectId, req.user.id)
+      [projectId, req.user.id],
+    )
 
     return res.status(201).json({
       messages: [
-        db.prepare('SELECT * FROM messages WHERE id = ?').get(userResult.lastInsertRowid),
-        db.prepare('SELECT * FROM messages WHERE id = ?').get(assistantResult.lastInsertRowid),
+        await db.get('SELECT * FROM messages WHERE id = ?', [userResult.lastInsertRowid]),
+        await db.get('SELECT * FROM messages WHERE id = ?', [assistantResult.lastInsertRowid]),
       ],
       files: savedFiles,
       provider: reply.provider,
@@ -448,20 +443,20 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
   }
 })
 
-app.get('/api/projects/:projectId/files', requireAuth, (req, res) => {
+app.get('/api/projects/:projectId/files', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const project = getProjectForUser(projectId, req.user.id)
+  const project = await getProjectForUser(projectId, req.user.id)
 
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' })
   }
 
-  return res.json({ files: getFiles(projectId, req.user.id) })
+  return res.json({ files: await getFiles(projectId, req.user.id) })
 })
 
 app.post('/api/projects/:projectId/files', requireAuth, upload.single('file'), async (req, res) => {
   const projectId = Number(req.params.projectId)
-  const project = getProjectForUser(projectId, req.user.id)
+  const project = await getProjectForUser(projectId, req.user.id)
 
   if (!project) {
     deleteUploadedFile(req.file)
@@ -474,13 +469,14 @@ app.post('/api/projects/:projectId/files', requireAuth, upload.single('file'), a
 
   const file = await persistUploadedFile(projectId, req.user.id, req.file)
 
-  db.prepare(
+  await db.run(
     `
       UPDATE projects
       SET updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `,
-  ).run(projectId, req.user.id)
+    [projectId, req.user.id],
+  )
 
   return res.status(201).json({ file })
 })
@@ -501,8 +497,10 @@ app.use((error, _req, res, _next) => {
   return res.status(500).json({ error: 'Unexpected server error.' })
 })
 
-app.listen(config.port, () => {
-  console.log(`Chatbot platform API listening on http://localhost:${config.port}`)
-})
+if (!process.env.VERCEL) {
+  app.listen(config.port, () => {
+    console.log(`Chatbot platform API listening on http://localhost:${config.port}`)
+  })
+}
 
 export default app

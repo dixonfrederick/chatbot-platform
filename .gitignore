@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .env
+.vercel
 data
 uploads
 
@@ -25,3 +26,5 @@ uploads
 *.njsproj
 *.sln
 *.sw?
+
+.vercel

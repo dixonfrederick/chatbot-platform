@@ -12,13 +12,14 @@ Minimal full-stack chatbot platform for the Full Stack Developer assignment.
 - Local demo provider when no OpenAI key is configured.
 - Drag-and-drop chat attachments with project file history.
 - Optional OpenAI Files API sync for uploaded files when OpenAI is enabled.
-- SQLite persistence with automatic schema creation.
+- SQLite local persistence and Postgres production persistence with automatic schema creation.
 
 ## Tech Stack
 
 - React, TypeScript, Vite
 - Express
-- SQLite via `better-sqlite3`
+- SQLite via `better-sqlite3` for local development
+- Postgres via `pg` for Vercel/Neon production deployments
 - JWT and bcrypt password hashing
 - OpenAI Node SDK
 
@@ -66,6 +67,7 @@ After build, Express serves the Vite `dist` folder and the API from the same pro
 | `PORT` | No | `4000` | Express server port |
 | `JWT_SECRET` | Yes in production | local dev secret | Token signing secret |
 | `DB_PATH` | No | `./data/app.db` | SQLite database path |
+| `DATABASE_URL` | Yes on Vercel | empty | Postgres connection string |
 | `LLM_PROVIDER` | No | auto-detects keys or `demo` | `demo`, `openai`, or `openrouter` |
 | `OPENAI_API_KEY` | No | empty | Enables OpenAI Responses and Files APIs |
 | `OPENAI_MODEL` | No | `gpt-5-mini` | Model used for chat responses |
@@ -91,17 +93,17 @@ After build, Express serves the Vite `dist` folder and the API from the same pro
 
 ## Deployment Notes
 
-The app is deployable as one Node service on Render, Railway, Fly.io, or a VPS.
+The app is deployable as one Node service on Render, Railway, Fly.io, or Vercel.
 
 Recommended settings:
 
 - Build command: `npm install && npm run build`
 - Start command: `npm start`
-- Add persistent disk or use a managed database if chat data must survive redeploys.
+- Use Postgres/Neon on Vercel via `DATABASE_URL`.
 - Set `JWT_SECRET`.
 - Set either `OPENAI_API_KEY` or `OPENROUTER_API_KEY` for real LLM responses.
 
-This repo includes `render.yaml` for Render Blueprint deployment and a `Dockerfile` for container hosts such as Fly.io.
+This repo includes `vercel.json` for Vercel, `render.yaml` for Render Blueprint deployment, and a `Dockerfile` for container hosts such as Fly.io.
 
 ## Demo Script
 

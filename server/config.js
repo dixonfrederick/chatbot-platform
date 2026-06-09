@@ -5,13 +5,16 @@ import { fileURLToPath } from 'node:url'
 dotenv.config({ quiet: true })
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dataDir = path.resolve(rootDir, 'data')
+const dataDir = process.env.VERCEL
+  ? path.resolve('/tmp/chatbot-platform')
+  : path.resolve(rootDir, 'data')
 
 export const config = {
   rootDir,
   dataDir,
   uploadsDir: path.resolve(dataDir, 'uploads'),
   clientDistDir: path.resolve(rootDir, 'dist'),
+  databaseUrl: process.env.DATABASE_URL || '',
   dbPath: path.resolve(process.env.DB_PATH || path.join(dataDir, 'app.db')),
   jwtSecret: process.env.JWT_SECRET || 'local-development-secret-change-me',
   llmProvider: (process.env.LLM_PROVIDER || '').toLowerCase(),
