@@ -28,3 +28,4 @@ uploads
 *.sw?
 
 .vercel
+.env*
