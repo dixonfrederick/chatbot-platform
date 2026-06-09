@@ -51,6 +51,10 @@ function cleanString(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function requestBody(req) {
+  return req.body && typeof req.body === 'object' ? req.body : {}
+}
+
 async function getProjectForUser(projectId, userId) {
   return db.get('SELECT * FROM projects WHERE id = ? AND user_id = ?', [projectId, userId])
 }
@@ -164,9 +168,10 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/auth/register', async (req, res, next) => {
   try {
-    const name = cleanString(req.body.name)
-    const email = cleanString(req.body.email).toLowerCase()
-    const password = cleanString(req.body.password)
+    const body = requestBody(req)
+    const name = cleanString(body.name)
+    const email = cleanString(body.email).toLowerCase()
+    const password = cleanString(body.password)
 
     if (!name || !isEmail(email) || password.length < 8) {
       return res.status(400).json({
@@ -196,8 +201,9 @@ app.post('/api/auth/register', async (req, res, next) => {
 
 app.post('/api/auth/login', async (req, res, next) => {
   try {
-    const email = cleanString(req.body.email).toLowerCase()
-    const password = cleanString(req.body.password)
+    const body = requestBody(req)
+    const email = cleanString(body.email).toLowerCase()
+    const password = cleanString(body.password)
     const user = await db.get('SELECT * FROM users WHERE email = ?', [email])
 
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
@@ -222,9 +228,10 @@ app.get('/api/projects', requireAuth, async (req, res) => {
 })
 
 app.post('/api/projects', requireAuth, async (req, res) => {
-  const name = cleanString(req.body.name)
-  const description = cleanString(req.body.description)
-  const systemPrompt = cleanString(req.body.system_prompt)
+  const body = requestBody(req)
+  const name = cleanString(body.name)
+  const description = cleanString(body.description)
+  const systemPrompt = cleanString(body.system_prompt)
 
   if (!name) {
     return res.status(400).json({ error: 'Project name is required.' })
@@ -271,17 +278,18 @@ app.get('/api/projects/:projectId', requireAuth, async (req, res) => {
 app.patch('/api/projects/:projectId', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
   const current = await getProjectForUser(projectId, req.user.id)
+  const body = requestBody(req)
 
   if (!current) {
     return res.status(404).json({ error: 'Project not found.' })
   }
 
-  const name = cleanString(req.body.name || current.name)
+  const name = cleanString(body.name || current.name)
   const description =
-    typeof req.body.description === 'string' ? req.body.description.trim() : current.description
+    typeof body.description === 'string' ? body.description.trim() : current.description
   const systemPrompt =
-    typeof req.body.system_prompt === 'string'
-      ? req.body.system_prompt.trim()
+    typeof body.system_prompt === 'string'
+      ? body.system_prompt.trim()
       : current.system_prompt
 
   if (!name) {
@@ -315,8 +323,9 @@ app.delete('/api/projects/:projectId', requireAuth, async (req, res) => {
 app.post('/api/projects/:projectId/prompts', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId)
   const project = await getProjectForUser(projectId, req.user.id)
-  const title = cleanString(req.body.title) || 'Prompt'
-  const content = cleanString(req.body.content)
+  const body = requestBody(req)
+  const title = cleanString(body.title) || 'Prompt'
+  const content = cleanString(body.content)
 
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' })
@@ -367,8 +376,9 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
     const projectId = Number(req.params.projectId)
     const project = await getProjectForUser(projectId, req.user.id)
     const uploadedFiles = Array.isArray(req.files) ? req.files : []
+    const body = requestBody(req)
     const message =
-      cleanString(req.body.message) ||
+      cleanString(body.message) ||
       (uploadedFiles.length > 0 ? 'Please analyze the attached file.' : '')
 
     if (!project) {
