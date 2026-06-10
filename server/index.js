@@ -13,6 +13,7 @@ import { createAssistantReply, getLlmStatus, uploadFileToOpenAI } from './llm.js
 
 const app = express()
 const activeRunControllers = new Map()
+const STALE_RUN_AFTER_MS = 15 * 60 * 1000
 
 app.disable('x-powered-by')
 app.use(
@@ -60,7 +61,28 @@ async function getProjectForUser(projectId, userId) {
   return db.get('SELECT * FROM projects WHERE id = ? AND user_id = ?', [projectId, userId])
 }
 
+function sqlTimestamp(date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ')
+}
+
+async function markStaleRunsFailed(userId) {
+  await db.run(
+    `
+      UPDATE chat_runs
+      SET
+        status = 'failed',
+        error = 'The workflow stopped reporting before it finished.',
+        updated_at = CURRENT_TIMESTAMP,
+        completed_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND status = 'running' AND updated_at < ?
+    `,
+    [userId, sqlTimestamp(new Date(Date.now() - STALE_RUN_AFTER_MS))],
+  )
+}
+
 async function projectSummaryRows(userId) {
+  await markStaleRunsFailed(userId)
+
   return db.all(
     `
         SELECT
@@ -436,6 +458,8 @@ app.get('/api/projects/:projectId', requireAuth, async (req, res) => {
   if (!project) {
     return res.status(404).json({ error: 'Project not found.' })
   }
+
+  await markStaleRunsFailed(req.user.id)
 
   return res.json({
     project,
