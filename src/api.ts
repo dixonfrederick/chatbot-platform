@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  ChatRun,
   FileRecord,
   Health,
   Message,
@@ -20,13 +21,15 @@ type RequestOptions = {
 
 export class ApiError extends Error {
   detail?: string
+  payload?: unknown
   status: number
 
-  constructor(message: string, status: number, detail?: string) {
+  constructor(message: string, status: number, detail?: string, payload?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
+    this.payload = payload
   }
 }
 
@@ -63,6 +66,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       payload.error || 'Request failed.',
       response.status,
       payload.detail,
+      payload,
     )
   }
 
@@ -111,25 +115,36 @@ export const api = {
       formData.append('message', message)
       files.forEach((file) => formData.append('files', file))
 
-      return request<{ files: FileRecord[]; messages: Message[]; model: string; provider: string }>(
-        `/projects/${projectId}/chat`,
-        {
-          formData,
-          method: 'POST',
-          token,
-        },
-      )
-    }
-
-    return request<{ files: FileRecord[]; messages: Message[]; model: string; provider: string }>(
-      `/projects/${projectId}/chat`,
-      {
-        body: { message },
+      return request<{
+        files: FileRecord[]
+        messages: Message[]
+        model: string
+        provider: string
+        run: ChatRun
+      }>(`/projects/${projectId}/chat`, {
+        formData,
         method: 'POST',
         token,
-      },
-    )
+      })
+    }
+
+    return request<{
+      files: FileRecord[]
+      messages: Message[]
+      model: string
+      provider: string
+      run: ChatRun
+    }>(`/projects/${projectId}/chat`, {
+      body: { message },
+      method: 'POST',
+      token,
+    })
   },
+  stopChat: (token: string, projectId: number) =>
+    request<{ messages: Message[]; run: ChatRun | null }>(`/projects/${projectId}/chat/stop`, {
+      method: 'POST',
+      token,
+    }),
   uploadFile: (token: string, projectId: number, file: File) => {
     const formData = new FormData()
     formData.append('file', file)

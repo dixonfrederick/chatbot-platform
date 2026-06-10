@@ -14,18 +14,19 @@ import {
   Save,
   Send,
   Settings,
+  Square,
   Sun,
   Trash2,
   User,
   X,
 } from 'lucide-react'
 import type { FormEvent } from 'react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import { ApiError, api } from './api'
-import type { Health, Message, Project, User as AuthUser } from './types'
+import type { ChatRun, Health, Message, Project, User as AuthUser } from './types'
 
 const TOKEN_KEY = 'chatbot_platform_token'
 const THEME_KEY = 'chatbot_platform_theme'
@@ -61,6 +62,35 @@ function resetDocumentScroll() {
   document.documentElement.scrollTop = 0
   document.body.scrollTop = 0
   window.scrollTo({ left: 0, top: 0 })
+}
+
+function runFromProject(project: Project): ChatRun | null {
+  if (!project.latest_run_id || !project.latest_run_status) {
+    return null
+  }
+
+  return {
+    assistant_message_id: null,
+    completed_at: project.latest_run_completed_at || null,
+    created_at: project.latest_run_created_at || project.updated_at,
+    error: project.latest_run_error || '',
+    id: project.latest_run_id,
+    model: '',
+    project_id: project.id,
+    provider: '',
+    response_id: '',
+    status: project.latest_run_status,
+    updated_at: project.latest_run_updated_at || project.updated_at,
+    user_id: project.user_id,
+    user_message_id: null,
+  }
+}
+
+function runsFromProjects(projects: Project[]) {
+  return projects.reduce<Record<number, ChatRun | null>>((runs, project) => {
+    runs[project.id] = runFromProject(project)
+    return runs
+  }, {})
 }
 
 function AuthScreen({
@@ -214,6 +244,58 @@ function MessageMarkdown({ content }: { content: string }) {
   )
 }
 
+function RunStatusCard({
+  isStopping,
+  onStop,
+  run,
+}: {
+  isStopping: boolean
+  onStop: () => void
+  run: ChatRun
+}) {
+  if (run.status === 'completed') {
+    return null
+  }
+
+  if (run.status === 'running') {
+    return (
+      <article className="message assistant run-status pending">
+        <div className="message-meta">
+          <span>Agent</span>
+          <small>thinking</small>
+        </div>
+        <div className="run-status-body">
+          <Loader2 aria-hidden="true" className="spin" size={18} />
+          <span>Working on this request.</span>
+          <button className="secondary stop-button" disabled={isStopping} onClick={onStop} type="button">
+            {isStopping ? (
+              <Loader2 aria-hidden="true" className="spin" size={16} />
+            ) : (
+              <Square aria-hidden="true" size={15} />
+            )}
+            Stop
+          </button>
+        </div>
+      </article>
+    )
+  }
+
+  const isFailed = run.status === 'failed'
+
+  return (
+    <article className={`message assistant run-status ${isFailed ? 'failed' : 'stopped'}`}>
+      <div className="message-meta">
+        <span>Agent</span>
+        <small>{isFailed ? 'failed' : 'stopped'}</small>
+      </div>
+      <div className="run-status-body">
+        <AlertCircle aria-hidden="true" size={18} />
+        <span>{isFailed ? run.error || 'The workflow failed.' : 'Workflow stopped.'}</span>
+      </div>
+    </article>
+  )
+}
+
 function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('login')
   const [authForm, setAuthForm] = useState({ email: '', name: '', password: '' })
@@ -238,7 +320,7 @@ function App() {
   })
   const [promptDraft, setPromptDraft] = useState('')
   const [projects, setProjects] = useState<Project[]>([])
-  const [pendingProjectIds, setPendingProjectIds] = useState<Set<number>>(() => new Set())
+  const [runsByProjectId, setRunsByProjectId] = useState<Record<number, ChatRun | null>>({})
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [settingsDraft, setSettingsDraft] = useState({
     description: '',
@@ -256,20 +338,50 @@ function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaceError, setWorkspaceError] = useState('')
+  const [stoppingProjectIds, setStoppingProjectIds] = useState<Set<number>>(() => new Set())
   const chatFileInputRef = useRef<HTMLInputElement | null>(null)
   const selectedProjectIdRef = useRef<number | null>(selectedProjectId)
+  const stoppedProjectIdsRef = useRef<Set<number>>(new Set())
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || null,
     [projects, selectedProjectId],
   )
-  const selectedProjectIsChatting = selectedProject
-    ? pendingProjectIds.has(selectedProject.id)
+  const selectedProjectRun = selectedProject ? runsByProjectId[selectedProject.id] || null : null
+  const selectedProjectIsChatting = selectedProjectRun?.status === 'running'
+  const selectedProjectIsStopping = selectedProject
+    ? stoppingProjectIds.has(selectedProject.id)
     : false
   const selectedProjectMessages =
     selectedProject && messagesProjectId === selectedProject.id ? messages : []
   const selectedProjectDetailIsLoading =
     selectedProject ? isDetailLoading || messagesProjectId !== selectedProject.id : false
+
+  const setProjectRun = useCallback((projectId: number, run: ChatRun | null) => {
+    setRunsByProjectId((current) => ({
+      ...current,
+      [projectId]: run,
+    }))
+  }, [])
+
+  const applyProjectDetail = useCallback(
+    (projectId: number, detail: Awaited<ReturnType<typeof api.projectDetail>>) => {
+      setMessages(detail.messages)
+      setMessagesProjectId(projectId)
+      setProjectRun(projectId, detail.run)
+      setPromptDraft(detail.project.system_prompt)
+      setSettingsDraft({
+        description: detail.project.description,
+        name: detail.project.name,
+      })
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === detail.project.id ? { ...project, ...detail.project } : project,
+        ),
+      )
+    },
+    [setProjectRun],
+  )
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId
@@ -303,6 +415,7 @@ function App() {
     if (!token) {
       setUser(null)
       setProjects([])
+      setRunsByProjectId({})
       setSelectedProjectId(null)
       return
     }
@@ -325,6 +438,7 @@ function App() {
 
         setUser(profile.user)
         setProjects(projectResult.projects)
+        setRunsByProjectId(runsFromProjects(projectResult.projects))
         setSelectedProjectId((current) => {
           if (current && projectResult.projects.some((project) => project.id === current)) {
             return current
@@ -378,18 +492,7 @@ function App() {
           return
         }
 
-        setMessages(detail.messages)
-        setMessagesProjectId(projectId)
-        setPromptDraft(detail.project.system_prompt)
-        setSettingsDraft({
-          description: detail.project.description,
-          name: detail.project.name,
-        })
-        setProjects((current) =>
-          current.map((project) =>
-            project.id === detail.project.id ? { ...project, ...detail.project } : project,
-          ),
-        )
+        applyProjectDetail(projectId, detail)
       } catch (error) {
         if (isActive) {
           setMessages([])
@@ -408,7 +511,44 @@ function App() {
     return () => {
       isActive = false
     }
-  }, [selectedProjectId, token])
+  }, [applyProjectDetail, selectedProjectId, token])
+
+  useEffect(() => {
+    if (!token || !selectedProjectId || selectedProjectRun?.status !== 'running') {
+      return
+    }
+
+    let isActive = true
+    const projectId = selectedProjectId
+    const authToken = token
+
+    async function pollProject() {
+      try {
+        const detail = await api.projectDetail(authToken, projectId)
+
+        if (isActive && selectedProjectIdRef.current === projectId) {
+          applyProjectDetail(projectId, detail)
+        }
+      } catch (error) {
+        if (isActive && selectedProjectIdRef.current === projectId) {
+          setWorkspaceError(getErrorMessage(error))
+        }
+      }
+    }
+
+    const pollId = window.setInterval(pollProject, 2500)
+
+    return () => {
+      isActive = false
+      window.clearInterval(pollId)
+    }
+  }, [
+    applyProjectDetail,
+    selectedProjectId,
+    selectedProjectRun?.id,
+    selectedProjectRun?.status,
+    token,
+  ])
 
   async function handleAuthSubmit(event: FormEvent) {
     event.preventDefault()
@@ -456,6 +596,7 @@ function App() {
       })
 
       setProjects((current) => [result.project, ...current])
+      setProjectRun(result.project.id, null)
       setSelectedProjectId(result.project.id)
       setNewProject({ description: '', name: '', system_prompt: '' })
     } catch (error) {
@@ -512,25 +653,12 @@ function App() {
     setChatFiles((current) => current.filter((_file, fileIndex) => fileIndex !== index))
   }
 
-  function setProjectPending(projectId: number, isPending: boolean) {
-    setPendingProjectIds((current) => {
-      const next = new Set(current)
-
-      if (isPending) {
-        next.add(projectId)
-      } else {
-        next.delete(projectId)
-      }
-
-      return next
-    })
-  }
-
   async function handleSendMessage(event: FormEvent) {
     event.preventDefault()
 
     if (
       !token ||
+      !user ||
       !selectedProject ||
       selectedProjectIsChatting ||
       (!chatInput.trim() && chatFiles.length === 0)
@@ -554,12 +682,27 @@ function App() {
       response_id: '',
       role: 'user',
     }
+    const optimisticRun: ChatRun = {
+      assistant_message_id: null,
+      completed_at: null,
+      created_at: new Date().toISOString(),
+      error: '',
+      id: optimisticMessage.id,
+      model: '',
+      project_id: projectId,
+      provider: '',
+      response_id: '',
+      status: 'running',
+      updated_at: new Date().toISOString(),
+      user_id: user.id,
+      user_message_id: optimisticMessage.id,
+    }
 
     setChatInput('')
     setChatFiles([])
     setMessagesProjectId(projectId)
     setMessages((current) => [...current, optimisticMessage])
-    setProjectPending(projectId, true)
+    setProjectRun(projectId, optimisticRun)
     setWorkspaceError('')
 
     try {
@@ -569,6 +712,8 @@ function App() {
         outgoing || 'Please analyze the attached file.',
         outgoingFiles,
       )
+
+      setProjectRun(projectId, result.run)
 
       if (selectedProjectIdRef.current === projectId) {
         setMessagesProjectId(projectId)
@@ -589,14 +734,64 @@ function App() {
         ),
       )
     } catch (error) {
+      const payload = error instanceof ApiError ? (error.payload as { run?: ChatRun }) : null
+
+      if (payload?.run) {
+        setProjectRun(projectId, payload.run)
+      }
+
       if (selectedProjectIdRef.current === projectId) {
-        setMessagesProjectId(projectId)
-        setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id))
-        setChatFiles(outgoingFiles)
-        setWorkspaceError(getErrorMessage(error))
+        const serverRunSettled =
+          error instanceof ApiError && (error.status === 409 || error.status === 502)
+
+        if (serverRunSettled || stoppedProjectIdsRef.current.has(projectId)) {
+          try {
+            const detail = await api.projectDetail(token, projectId)
+            applyProjectDetail(projectId, detail)
+          } catch {
+            setWorkspaceError(getErrorMessage(error))
+          }
+        } else {
+          setProjectRun(projectId, null)
+          setMessagesProjectId(projectId)
+          setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id))
+          setChatFiles(outgoingFiles)
+          setWorkspaceError(getErrorMessage(error))
+        }
       }
     } finally {
-      setProjectPending(projectId, false)
+      stoppedProjectIdsRef.current.delete(projectId)
+    }
+  }
+
+  async function handleStopWorkflow() {
+    if (!token || !selectedProject || !selectedProjectIsChatting) {
+      return
+    }
+
+    const projectId = selectedProject.id
+    stoppedProjectIdsRef.current.add(projectId)
+    setStoppingProjectIds((current) => new Set(current).add(projectId))
+    setWorkspaceError('')
+
+    try {
+      const result = await api.stopChat(token, projectId)
+
+      setProjectRun(projectId, result.run)
+
+      if (selectedProjectIdRef.current === projectId) {
+        const detail = await api.projectDetail(token, projectId)
+        applyProjectDetail(projectId, detail)
+      }
+    } catch (error) {
+      stoppedProjectIdsRef.current.delete(projectId)
+      setWorkspaceError(getErrorMessage(error))
+    } finally {
+      setStoppingProjectIds((current) => {
+        const next = new Set(current)
+        next.delete(projectId)
+        return next
+      })
     }
   }
 
@@ -616,6 +811,11 @@ function App() {
         setSelectedProjectId((currentProjectId) =>
           currentProjectId === projectId ? next[0]?.id || null : currentProjectId,
         )
+        return next
+      })
+      setRunsByProjectId((current) => {
+        const next = { ...current }
+        delete next[projectId]
         return next
       })
       setDeleteProjectTarget(null)
@@ -709,20 +909,32 @@ function App() {
         </form>
 
         <nav className="project-list" aria-label="Agents">
-          {projects.map((project) => (
-            <button
-              className={project.id === selectedProjectId ? 'project-item active' : 'project-item'}
-              key={project.id}
-              onClick={() => setSelectedProjectId(project.id)}
-              type="button"
-            >
-              <FolderKanban aria-hidden="true" size={18} />
-              <span>
-                <strong>{project.name}</strong>
-                <small>{project.message_count || 0} chats</small>
-              </span>
-            </button>
-          ))}
+          {projects.map((project) => {
+            const projectRun = runsByProjectId[project.id]
+            const projectStatus =
+              projectRun?.status === 'running'
+                ? 'thinking'
+                : projectRun?.status === 'failed'
+                  ? 'failed'
+                  : projectRun?.status === 'cancelled'
+                    ? 'stopped'
+                    : `${project.message_count || 0} chats`
+
+            return (
+              <button
+                className={project.id === selectedProjectId ? 'project-item active' : 'project-item'}
+                key={project.id}
+                onClick={() => setSelectedProjectId(project.id)}
+                type="button"
+              >
+                <FolderKanban aria-hidden="true" size={18} />
+                <span>
+                  <strong>{project.name}</strong>
+                  <small>{projectStatus}</small>
+                </span>
+              </button>
+            )
+          })}
         </nav>
       </aside>
 
@@ -794,14 +1006,12 @@ function App() {
                   </article>
                 ))
               )}
-              {selectedProjectIsChatting ? (
-                <article className="message assistant pending">
-                  <div className="message-meta">
-                    <span>Agent</span>
-                    <small>thinking</small>
-                  </div>
-                  <Loader2 aria-hidden="true" className="spin" size={18} />
-                </article>
+              {selectedProjectRun && selectedProjectRun.status !== 'completed' ? (
+                <RunStatusCard
+                  isStopping={selectedProjectIsStopping}
+                  onStop={handleStopWorkflow}
+                  run={selectedProjectRun}
+                />
               ) : null}
             </div>
 

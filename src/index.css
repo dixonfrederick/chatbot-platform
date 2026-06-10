@@ -535,8 +535,39 @@ label > span {
   align-self: flex-start;
 }
 
-.message.pending {
-  width: 160px;
+.message.run-status {
+  width: min(360px, 88%);
+}
+
+.message.run-status.failed {
+  border-color: #f2b8b5;
+  background: var(--danger-soft);
+}
+
+.message.run-status.failed .run-status-body,
+.message.run-status.failed .message-meta {
+  color: var(--danger);
+}
+
+.message.run-status.stopped {
+  border-style: dashed;
+}
+
+.run-status-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted-strong);
+}
+
+.run-status-body span {
+  min-width: 0;
+  flex: 1;
+}
+
+.stop-button {
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .markdown-content {

@@ -89,9 +89,29 @@ async function createPostgresDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS chat_runs (
+      id SERIAL PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      assistant_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'running' CHECK (
+        status IN ('running', 'completed', 'failed', 'cancelled')
+      ),
+      error TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      response_id TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+
     CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_project_id ON messages(project_id);
     CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_runs_project_id ON chat_runs(project_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_runs_status ON chat_runs(status);
   `)
 
   return {
@@ -184,9 +204,33 @@ async function createSqliteDb() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS chat_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      user_message_id INTEGER,
+      assistant_message_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'running' CHECK (
+        status IN ('running', 'completed', 'failed', 'cancelled')
+      ),
+      error TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      response_id TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_message_id) REFERENCES messages(id) ON DELETE SET NULL,
+      FOREIGN KEY (assistant_message_id) REFERENCES messages(id) ON DELETE SET NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_project_id ON messages(project_id);
     CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_runs_project_id ON chat_runs(project_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_runs_status ON chat_runs(status);
   `)
 
   return {

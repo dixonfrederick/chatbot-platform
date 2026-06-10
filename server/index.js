@@ -12,6 +12,7 @@ import { publicUser, requireAuth, signToken } from './auth.js'
 import { createAssistantReply, getLlmStatus, uploadFileToOpenAI } from './llm.js'
 
 const app = express()
+const activeRunControllers = new Map()
 
 app.disable('x-powered-by')
 app.use(
@@ -66,7 +67,49 @@ async function projectSummaryRows(userId) {
           p.*,
           (SELECT COUNT(*) FROM messages m WHERE m.project_id = p.id) AS message_count,
           (SELECT COUNT(*) FROM files f WHERE f.project_id = p.id) AS file_count,
-          (SELECT COUNT(*) FROM prompts pr WHERE pr.project_id = p.id) AS prompt_count
+          (SELECT COUNT(*) FROM prompts pr WHERE pr.project_id = p.id) AS prompt_count,
+          (
+            SELECT r.id
+            FROM chat_runs r
+            WHERE r.project_id = p.id AND r.user_id = p.user_id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ) AS latest_run_id,
+          (
+            SELECT r.status
+            FROM chat_runs r
+            WHERE r.project_id = p.id AND r.user_id = p.user_id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ) AS latest_run_status,
+          (
+            SELECT r.error
+            FROM chat_runs r
+            WHERE r.project_id = p.id AND r.user_id = p.user_id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ) AS latest_run_error,
+          (
+            SELECT r.created_at
+            FROM chat_runs r
+            WHERE r.project_id = p.id AND r.user_id = p.user_id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ) AS latest_run_created_at,
+          (
+            SELECT r.updated_at
+            FROM chat_runs r
+            WHERE r.project_id = p.id AND r.user_id = p.user_id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ) AS latest_run_updated_at,
+          (
+            SELECT r.completed_at
+            FROM chat_runs r
+            WHERE r.project_id = p.id AND r.user_id = p.user_id
+            ORDER BY r.id DESC
+            LIMIT 1
+          ) AS latest_run_completed_at
         FROM projects p
         WHERE p.user_id = ?
         ORDER BY p.updated_at DESC, p.id DESC
@@ -85,6 +128,133 @@ async function getMessages(projectId, userId) {
       `,
     [projectId, userId],
   )
+}
+
+async function getLatestRun(projectId, userId) {
+  return db.get(
+    `
+      SELECT
+        id,
+        project_id,
+        user_id,
+        user_message_id,
+        assistant_message_id,
+        status,
+        error,
+        provider,
+        model,
+        response_id,
+        created_at,
+        updated_at,
+        completed_at
+      FROM chat_runs
+      WHERE project_id = ? AND user_id = ?
+      ORDER BY id DESC
+    `,
+    [projectId, userId],
+  )
+}
+
+async function getRunById(runId, userId) {
+  return db.get(
+    `
+      SELECT
+        id,
+        project_id,
+        user_id,
+        user_message_id,
+        assistant_message_id,
+        status,
+        error,
+        provider,
+        model,
+        response_id,
+        created_at,
+        updated_at,
+        completed_at
+      FROM chat_runs
+      WHERE id = ? AND user_id = ?
+    `,
+    [runId, userId],
+  )
+}
+
+async function getRunningRun(projectId, userId) {
+  return db.get(
+    `
+      SELECT
+        id,
+        project_id,
+        user_id,
+        user_message_id,
+        assistant_message_id,
+        status,
+        error,
+        provider,
+        model,
+        response_id,
+        created_at,
+        updated_at,
+        completed_at
+      FROM chat_runs
+      WHERE project_id = ? AND user_id = ? AND status = 'running'
+      ORDER BY id DESC
+    `,
+    [projectId, userId],
+  )
+}
+
+async function markRun(runId, userId, status, fields = {}) {
+  const completedAtSql = status === 'running' ? 'NULL' : 'CURRENT_TIMESTAMP'
+
+  await db.run(
+    `
+      UPDATE chat_runs
+      SET
+        status = ?,
+        error = ?,
+        provider = ?,
+        model = ?,
+        response_id = ?,
+        assistant_message_id = ?,
+        updated_at = CURRENT_TIMESTAMP,
+        completed_at = ${completedAtSql}
+      WHERE id = ? AND user_id = ?
+    `,
+    [
+      status,
+      fields.error || '',
+      fields.provider || '',
+      fields.model || '',
+      fields.responseId || '',
+      fields.assistantMessageId || null,
+      runId,
+      userId,
+    ],
+  )
+
+  return getRunById(runId, userId)
+}
+
+async function stopRunningRun(projectId, userId) {
+  const run = await getRunningRun(projectId, userId)
+
+  if (!run) {
+    return null
+  }
+
+  const stoppedRun = await markRun(run.id, userId, 'cancelled', {
+    error: 'Stopped by user.',
+  })
+
+  activeRunControllers.get(Number(run.id))?.abort()
+
+  return stoppedRun
+}
+
+function isAbortError(error) {
+  const message = String(error?.message || '').toLowerCase()
+  return error?.name === 'AbortError' || error?.name === 'APIUserAbortError' || message.includes('aborted')
 }
 
 async function getFiles(projectId, userId) {
@@ -272,6 +442,7 @@ app.get('/api/projects/:projectId', requireAuth, async (req, res) => {
     prompts: await getPrompts(projectId, req.user.id),
     files: await getFiles(projectId, req.user.id),
     messages: await getMessages(projectId, req.user.id),
+    run: await getLatestRun(projectId, req.user.id),
   })
 })
 
@@ -371,11 +542,32 @@ app.get('/api/projects/:projectId/messages', requireAuth, async (req, res) => {
   return res.json({ messages: await getMessages(projectId, req.user.id) })
 })
 
+app.post('/api/projects/:projectId/chat/stop', requireAuth, async (req, res) => {
+  const projectId = Number(req.params.projectId)
+  const project = await getProjectForUser(projectId, req.user.id)
+
+  if (!project) {
+    return res.status(404).json({ error: 'Project not found.' })
+  }
+
+  const run = await stopRunningRun(projectId, req.user.id)
+
+  return res.json({
+    run,
+    messages: await getMessages(projectId, req.user.id),
+  })
+})
+
 app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5), async (req, res, next) => {
+  const uploadedFiles = Array.isArray(req.files) ? req.files : []
+  let projectId
+  let runId
+  let userMessage = null
+  let savedFiles = []
+
   try {
-    const projectId = Number(req.params.projectId)
+    projectId = Number(req.params.projectId)
     const project = await getProjectForUser(projectId, req.user.id)
-    const uploadedFiles = Array.isArray(req.files) ? req.files : []
     const body = requestBody(req)
     const message =
       cleanString(body.message) ||
@@ -387,12 +579,35 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
     }
 
     if (!message) {
+      uploadedFiles.forEach(deleteUploadedFile)
       return res.status(400).json({ error: 'Message is required.' })
     }
 
+    const runningRun = await getRunningRun(projectId, req.user.id)
+
+    if (runningRun) {
+      uploadedFiles.forEach(deleteUploadedFile)
+      return res.status(409).json({
+        error: 'This agent is already thinking.',
+        run: runningRun,
+      })
+    }
+
+    const runResult = await db.run(
+      `
+        INSERT INTO chat_runs (project_id, user_id, status)
+        VALUES (?, ?, 'running')
+      `,
+      [projectId, req.user.id],
+    )
+    runId = runResult.lastInsertRowid
+
+    const controller = new AbortController()
+    activeRunControllers.set(Number(runId), controller)
+
     const history = await getMessages(projectId, req.user.id)
     const files = await getFiles(projectId, req.user.id)
-    const savedFiles = []
+    savedFiles = []
 
     for (const file of uploadedFiles) {
       savedFiles.push(await persistUploadedFile(projectId, req.user.id, file))
@@ -403,11 +618,21 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
       : ''
     const userResult = await db.run(
       `
-          INSERT INTO messages (project_id, user_id, role, content, provider)
-          VALUES (?, ?, 'user', ?, 'user')
-        `,
+        INSERT INTO messages (project_id, user_id, role, content, provider)
+        VALUES (?, ?, 'user', ?, 'user')
+      `,
       [projectId, req.user.id, `${message}${attachmentLabel}`],
     )
+
+    await db.run(
+      `
+        UPDATE chat_runs
+        SET user_message_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `,
+      [userResult.lastInsertRowid, runId, req.user.id],
+    )
+    userMessage = await db.get('SELECT * FROM messages WHERE id = ?', [userResult.lastInsertRowid])
 
     const reply = await createAssistantReply({
       attachments: uploadedFiles,
@@ -415,14 +640,36 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
       history,
       message,
       project,
+      signal: controller.signal,
     })
+    const currentRun = await getRunById(runId, req.user.id)
+
+    if (currentRun?.status === 'cancelled') {
+      return res.status(409).json({
+        error: 'Workflow stopped.',
+        files: savedFiles,
+        messages: userMessage ? [userMessage] : [],
+        run: currentRun,
+      })
+    }
+
     const assistantResult = await db.run(
       `
-          INSERT INTO messages (project_id, user_id, role, content, provider, model, response_id)
-          VALUES (?, ?, 'assistant', ?, ?, ?, ?)
-        `,
+        INSERT INTO messages (project_id, user_id, role, content, provider, model, response_id)
+        VALUES (?, ?, 'assistant', ?, ?, ?, ?)
+      `,
       [projectId, req.user.id, reply.content, reply.provider, reply.model, reply.responseId],
     )
+    const assistantMessage = await db.get('SELECT * FROM messages WHERE id = ?', [
+      assistantResult.lastInsertRowid,
+    ])
+
+    const completedRun = await markRun(runId, req.user.id, 'completed', {
+      assistantMessageId: assistantResult.lastInsertRowid,
+      model: reply.model,
+      provider: reply.provider,
+      responseId: reply.responseId,
+    })
 
     await db.run(
       `
@@ -434,15 +681,56 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
     )
 
     return res.status(201).json({
-      messages: [
-        await db.get('SELECT * FROM messages WHERE id = ?', [userResult.lastInsertRowid]),
-        await db.get('SELECT * FROM messages WHERE id = ?', [assistantResult.lastInsertRowid]),
-      ],
+      messages: [userMessage, assistantMessage].filter(Boolean),
       files: savedFiles,
       provider: reply.provider,
       model: reply.model,
+      run: completedRun,
     })
   } catch (error) {
+    if (runId) {
+      const cancelledRun = await getRunById(runId, req.user.id)
+
+      if (cancelledRun?.status === 'cancelled' || isAbortError(error)) {
+        const run =
+          cancelledRun?.status === 'cancelled'
+            ? cancelledRun
+            : await markRun(runId, req.user.id, 'cancelled', {
+                error: 'Stopped by user.',
+              })
+
+        return res.status(409).json({
+          error: 'Workflow stopped.',
+          files: savedFiles,
+          messages: userMessage ? [userMessage] : [],
+          run,
+        })
+      }
+
+      const run = await markRun(runId, req.user.id, 'failed', {
+        error: error.message || 'The model request failed.',
+      })
+
+      if (projectId) {
+        await db.run(
+          `
+            UPDATE projects
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+          `,
+          [projectId, req.user.id],
+        )
+      }
+
+      return res.status(502).json({
+        error: 'The LLM provider could not complete the request.',
+        detail: error.message,
+        files: savedFiles,
+        messages: userMessage ? [userMessage] : [],
+        run,
+      })
+    }
+
     if (getLlmStatus().provider !== 'demo') {
       return res.status(502).json({
         error: 'The LLM provider could not complete the request.',
@@ -450,6 +738,10 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
       })
     }
     return next(error)
+  } finally {
+    if (runId) {
+      activeRunControllers.delete(Number(runId))
+    }
   }
 })
 

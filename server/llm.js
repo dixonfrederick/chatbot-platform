@@ -160,7 +160,14 @@ function buildDemoReply({ project, message, files, attachments }) {
   ].join(' ')
 }
 
-export async function createAssistantReply({ project, history, message, files, attachments = [] }) {
+export async function createAssistantReply({
+  project,
+  history,
+  message,
+  files,
+  attachments = [],
+  signal,
+}) {
   if (!openai && !openRouter) {
     return {
       content: buildDemoReply({ project, message, files, attachments }),
@@ -204,7 +211,7 @@ export async function createAssistantReply({ project, history, message, files, a
       ]
     }
 
-    const response = await openRouter.chat.completions.create(payload)
+    const response = await openRouter.chat.completions.create(payload, { signal })
     const choice = response.choices?.[0]?.message?.content
 
     return {
@@ -219,11 +226,14 @@ export async function createAssistantReply({ project, history, message, files, a
 
   const textContext = await buildTextAttachmentContext(attachments)
   const input = [...conversation, { role: 'user', content: `${message}${textContext}` }]
-  const response = await openai.responses.create({
-    model: config.openaiModel,
-    instructions: project.system_prompt || undefined,
-    input,
-  })
+  const response = await openai.responses.create(
+    {
+      model: config.openaiModel,
+      instructions: project.system_prompt || undefined,
+      input,
+    },
+    { signal },
+  )
 
   return {
     content:

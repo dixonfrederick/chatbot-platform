@@ -16,6 +16,12 @@ export type Project = {
   message_count?: number
   file_count?: number
   prompt_count?: number
+  latest_run_id?: number | null
+  latest_run_status?: ChatRunStatus | null
+  latest_run_error?: string | null
+  latest_run_created_at?: string | null
+  latest_run_updated_at?: string | null
+  latest_run_completed_at?: string | null
 }
 
 export type Message = {
@@ -48,6 +54,24 @@ export type FileRecord = {
   created_at: string
 }
 
+export type ChatRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export type ChatRun = {
+  id: number
+  project_id: number
+  user_id: number
+  user_message_id: number | null
+  assistant_message_id: number | null
+  status: ChatRunStatus
+  error: string
+  provider: string
+  model: string
+  response_id: string
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
 export type AuthResponse = {
   token: string
   user: User
@@ -58,6 +82,7 @@ export type ProjectDetail = {
   prompts: Prompt[]
   files: FileRecord[]
   messages: Message[]
+  run: ChatRun | null
 }
 
 export type Health = {
