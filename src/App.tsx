@@ -1,7 +1,6 @@
 import {
   AlertCircle,
   Bot,
-  CheckCircle2,
   FileText,
   FolderKanban,
   Loader2,
@@ -22,8 +21,11 @@ import {
 } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
+import remarkGfm from 'remark-gfm'
 import { ApiError, api } from './api'
-import type { FileRecord, Health, Message, Project, Prompt, User as AuthUser } from './types'
+import type { Health, Message, Project, User as AuthUser } from './types'
 
 const TOKEN_KEY = 'chatbot_platform_token'
 const THEME_KEY = 'chatbot_platform_theme'
@@ -182,7 +184,26 @@ function EmptyWorkspace() {
         <FolderKanban aria-hidden="true" size={28} />
       </div>
       <h2>No agent selected</h2>
-      <p>Create an agent from the sidebar to start configuring prompts and chats.</p>
+      <p>Create an agent from the sidebar to start configuring instructions and chats.</p>
+    </div>
+  )
+}
+
+function MessageMarkdown({ content }: { content: string }) {
+  return (
+    <div className="markdown-content">
+      <ReactMarkdown
+        components={{
+          a: ({ children, ...props }) => (
+            <a {...props} rel="noreferrer" target="_blank">
+              {children}
+            </a>
+          ),
+        }}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   )
 }
@@ -193,14 +214,14 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [chatFiles, setChatFiles] = useState<File[]>([])
   const [chatInput, setChatInput] = useState('')
-  const [files, setFiles] = useState<FileRecord[]>([])
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
   const [isBootstrapping, setIsBootstrapping] = useState(false)
   const [isChatting, setIsChatting] = useState(false)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [isDetailLoading, setIsDetailLoading] = useState(false)
-  const [isSavingPrompt, setIsSavingPrompt] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -210,8 +231,6 @@ function App() {
     system_prompt: '',
   })
   const [promptDraft, setPromptDraft] = useState('')
-  const [promptStatus, setPromptStatus] = useState('')
-  const [prompts, setPrompts] = useState<Prompt[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [settingsDraft, setSettingsDraft] = useState({
@@ -306,10 +325,8 @@ function App() {
 
   useEffect(() => {
     if (!token || !selectedProjectId) {
-      setFiles([])
       setMessages([])
       setPromptDraft('')
-      setPrompts([])
       setSettingsDraft({ description: '', name: '' })
       return
     }
@@ -329,10 +346,8 @@ function App() {
           return
         }
 
-        setFiles(detail.files)
         setMessages(detail.messages)
         setPromptDraft(detail.project.system_prompt)
-        setPrompts(detail.prompts)
         setSettingsDraft({
           description: detail.project.description,
           name: detail.project.name,
@@ -437,39 +452,11 @@ function App() {
           project.id === result.project.id ? { ...project, ...result.project } : project,
         ),
       )
+      setPromptDraft(result.project.system_prompt)
     } catch (error) {
       setWorkspaceError(getErrorMessage(error))
     } finally {
       setIsSavingSettings(false)
-    }
-  }
-
-  async function handleSavePrompt() {
-    if (!token || !selectedProject || !promptDraft.trim()) {
-      return
-    }
-
-    setIsSavingPrompt(true)
-    setPromptStatus('')
-    setWorkspaceError('')
-
-    try {
-      const result = await api.savePrompt(token, selectedProject.id, {
-        content: promptDraft,
-        title: 'Agent prompt',
-      })
-
-      setPrompts((current) => [result.prompt, ...current])
-      setProjects((current) =>
-        current.map((project) =>
-          project.id === result.project.id ? { ...project, ...result.project } : project,
-        ),
-      )
-      setPromptStatus('Saved')
-    } catch (error) {
-      setWorkspaceError(getErrorMessage(error))
-    } finally {
-      setIsSavingPrompt(false)
     }
   }
 
@@ -531,9 +518,6 @@ function App() {
         ...current.filter((message) => message.id !== optimisticMessage.id),
         ...result.messages,
       ])
-      if (result.files.length > 0) {
-        setFiles((current) => [...result.files, ...current])
-      }
       setProjects((current) =>
         current.map((project) =>
           project.id === selectedProject.id
@@ -555,21 +539,28 @@ function App() {
   }
 
   async function handleDeleteProject() {
-    if (!token || !selectedProject || !window.confirm('Delete this agent and its data?')) {
+    if (!token || !deleteProjectTarget) {
       return
     }
 
+    const projectId = deleteProjectTarget.id
+    setIsDeletingProject(true)
     setWorkspaceError('')
 
     try {
-      await api.deleteProject(token, selectedProject.id)
+      await api.deleteProject(token, projectId)
       setProjects((current) => {
-        const next = current.filter((project) => project.id !== selectedProject.id)
-        setSelectedProjectId(next[0]?.id || null)
+        const next = current.filter((project) => project.id !== projectId)
+        setSelectedProjectId((currentProjectId) =>
+          currentProjectId === projectId ? next[0]?.id || null : currentProjectId,
+        )
         return next
       })
+      setDeleteProjectTarget(null)
     } catch (error) {
       setWorkspaceError(getErrorMessage(error))
+    } finally {
+      setIsDeletingProject(false)
     }
   }
 
@@ -600,7 +591,8 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <>
+      <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="brand-mark">
@@ -634,12 +626,12 @@ function App() {
             />
           </label>
           <label>
-            <span>Initial prompt</span>
+            <span>Instructions</span>
             <textarea
               onChange={(event) =>
                 setNewProject((current) => ({ ...current, system_prompt: event.target.value }))
               }
-              placeholder="Be concise, cite policy, escalate billing issues."
+              placeholder="Set the agent's role, tone, and rules."
               rows={4}
               value={newProject.system_prompt}
             />
@@ -665,9 +657,7 @@ function App() {
               <FolderKanban aria-hidden="true" size={18} />
               <span>
                 <strong>{project.name}</strong>
-                <small>
-                  {project.message_count || 0} chats / {project.file_count || 0} files
-                </small>
+                <small>{project.message_count || 0} chats</small>
               </span>
             </button>
           ))}
@@ -738,7 +728,7 @@ function App() {
                       <span>{message.role === 'assistant' ? 'Agent' : 'You'}</span>
                       {message.provider !== 'user' ? <small>{message.model || message.provider}</small> : null}
                     </div>
-                    <p>{message.content}</p>
+                    <MessageMarkdown content={message.content} />
                   </article>
                 ))
               )}
@@ -868,6 +858,16 @@ function App() {
                     value={settingsDraft.description}
                   />
                 </label>
+                <label>
+                  <span>Instructions</span>
+                  <textarea
+                    className="prompt-box"
+                    onChange={(event) => setPromptDraft(event.target.value)}
+                    placeholder="Set the agent's role, tone, and rules."
+                    rows={7}
+                    value={promptDraft}
+                  />
+                </label>
                 <div className="button-row">
                   <button className="secondary" disabled={isSavingSettings} type="submit">
                     {isSavingSettings ? (
@@ -877,92 +877,70 @@ function App() {
                     )}
                     Save
                   </button>
-                  <button className="danger" onClick={handleDeleteProject} type="button">
+                  <button
+                    aria-label="Delete agent"
+                    className="danger"
+                    onClick={() => setDeleteProjectTarget(selectedProject)}
+                    title="Delete agent"
+                    type="button"
+                  >
                     <Trash2 aria-hidden="true" size={18} />
                   </button>
                 </div>
               </form>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-title">
-                <Bot aria-hidden="true" size={18} />
-                <h2>Prompt</h2>
-              </div>
-              <textarea
-                className="prompt-box"
-                onChange={(event) => {
-                  setPromptDraft(event.target.value)
-                  setPromptStatus('')
-                }}
-                rows={7}
-                value={promptDraft}
-              />
-              <div className="button-row">
-                <button
-                  className="secondary"
-                  disabled={isSavingPrompt || !promptDraft.trim()}
-                  onClick={handleSavePrompt}
-                  type="button"
-                >
-                  {isSavingPrompt ? (
-                    <Loader2 aria-hidden="true" className="spin" size={18} />
-                  ) : (
-                    <Save aria-hidden="true" size={18} />
-                  )}
-                  Save prompt
-                </button>
-                {promptStatus ? (
-                  <span className="status-ok">
-                    <CheckCircle2 aria-hidden="true" size={16} />
-                    {promptStatus}
-                  </span>
-                ) : null}
-              </div>
-              <div className="prompt-history">
-                {prompts.slice(0, 3).map((prompt) => (
-                  <button
-                    key={prompt.id}
-                    onClick={() => setPromptDraft(prompt.content)}
-                    type="button"
-                  >
-                    <span>{prompt.title}</span>
-                    <small>{new Date(prompt.created_at).toLocaleDateString()}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="inspector-section">
-              <div className="section-title">
-                <FileText aria-hidden="true" size={18} />
-                <h2>Files</h2>
-              </div>
-              <div className="file-list">
-                {files.length === 0 ? (
-                  <p className="muted-copy">No files uploaded</p>
-                ) : (
-                  files.map((file) => (
-                    <article className="file-row" key={file.id} title={file.original_name}>
-                      <FileText aria-hidden="true" size={18} />
-                      <span>
-                        <strong>{file.original_name}</strong>
-                        <small>
-                          {formatBytes(file.size)}
-                          {file.openai_file_id ? ' / OpenAI synced' : ' / stored'}
-                        </small>
-                      </span>
-                    </article>
-                  ))
-                )}
-              </div>
             </section>
           </>
         ) : (
           <EmptyWorkspace />
         )}
       </aside>
-    </div>
+      </div>
+
+      {deleteProjectTarget ? (
+        <div
+          aria-labelledby="delete-agent-title"
+          aria-modal="true"
+          className="modal-backdrop"
+          role="dialog"
+        >
+          <section className="modal-panel">
+            <div className="modal-icon danger">
+              <Trash2 aria-hidden="true" size={22} />
+            </div>
+            <div className="modal-copy">
+              <h2 id="delete-agent-title">Delete agent?</h2>
+              <p>
+                This will remove "{deleteProjectTarget.name}", its chat history, instructions, and
+                attached file records.
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="secondary"
+                disabled={isDeletingProject}
+                onClick={() => setDeleteProjectTarget(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="danger filled"
+                disabled={isDeletingProject}
+                onClick={handleDeleteProject}
+                type="button"
+              >
+                {isDeletingProject ? (
+                  <Loader2 aria-hidden="true" className="spin" size={18} />
+                ) : (
+                  <Trash2 aria-hidden="true" size={18} />
+                )}
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
   )
 }
 
