@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react'
 import type { FormEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
@@ -55,6 +55,12 @@ function formatBytes(size: number) {
   }
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function resetDocumentScroll() {
+  document.documentElement.scrollTop = 0
+  document.body.scrollTop = 0
+  window.scrollTo({ left: 0, top: 0 })
 }
 
 function AuthScreen({
@@ -255,6 +261,18 @@ function App() {
     () => projects.find((project) => project.id === selectedProjectId) || null,
     [projects, selectedProjectId],
   )
+
+  useLayoutEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual'
+    }
+
+    resetDocumentScroll()
+  }, [])
+
+  useEffect(() => {
+    resetDocumentScroll()
+  }, [selectedProjectId, token, user?.id])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme

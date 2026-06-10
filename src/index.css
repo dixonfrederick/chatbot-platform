@@ -72,6 +72,10 @@ body,
   height: 100%;
 }
 
+html {
+  overflow: hidden;
+}
+
 body {
   background: var(--bg);
   margin: 0;
@@ -851,6 +855,7 @@ label > span {
 }
 
 @media (max-width: 760px) {
+  html,
   body {
     overflow: auto;
   }
