@@ -224,7 +224,6 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
   const [isBootstrapping, setIsBootstrapping] = useState(false)
-  const [isChatting, setIsChatting] = useState(false)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [isDetailLoading, setIsDetailLoading] = useState(false)
@@ -238,6 +237,7 @@ function App() {
   })
   const [promptDraft, setPromptDraft] = useState('')
   const [projects, setProjects] = useState<Project[]>([])
+  const [pendingProjectIds, setPendingProjectIds] = useState<Set<number>>(() => new Set())
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [settingsDraft, setSettingsDraft] = useState({
     description: '',
@@ -256,11 +256,19 @@ function App() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaceError, setWorkspaceError] = useState('')
   const chatFileInputRef = useRef<HTMLInputElement | null>(null)
+  const selectedProjectIdRef = useRef<number | null>(selectedProjectId)
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || null,
     [projects, selectedProjectId],
   )
+  const selectedProjectIsChatting = selectedProject
+    ? pendingProjectIds.has(selectedProject.id)
+    : false
+
+  useEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId
+  }, [selectedProjectId])
 
   useLayoutEffect(() => {
     if ('scrollRestoration' in window.history) {
@@ -495,13 +503,33 @@ function App() {
     setChatFiles((current) => current.filter((_file, fileIndex) => fileIndex !== index))
   }
 
+  function setProjectPending(projectId: number, isPending: boolean) {
+    setPendingProjectIds((current) => {
+      const next = new Set(current)
+
+      if (isPending) {
+        next.add(projectId)
+      } else {
+        next.delete(projectId)
+      }
+
+      return next
+    })
+  }
+
   async function handleSendMessage(event: FormEvent) {
     event.preventDefault()
 
-    if (!token || !selectedProject || (!chatInput.trim() && chatFiles.length === 0)) {
+    if (
+      !token ||
+      !selectedProject ||
+      selectedProjectIsChatting ||
+      (!chatInput.trim() && chatFiles.length === 0)
+    ) {
       return
     }
 
+    const projectId = selectedProject.id
     const outgoing = chatInput.trim()
     const outgoingFiles = chatFiles
     const attachmentLine = outgoingFiles.length
@@ -512,7 +540,7 @@ function App() {
       created_at: new Date().toISOString(),
       id: -Date.now(),
       model: '',
-      project_id: selectedProject.id,
+      project_id: projectId,
       provider: 'user',
       response_id: '',
       role: 'user',
@@ -521,24 +549,26 @@ function App() {
     setChatInput('')
     setChatFiles([])
     setMessages((current) => [...current, optimisticMessage])
-    setIsChatting(true)
+    setProjectPending(projectId, true)
     setWorkspaceError('')
 
     try {
       const result = await api.sendMessage(
         token,
-        selectedProject.id,
+        projectId,
         outgoing || 'Please analyze the attached file.',
         outgoingFiles,
       )
 
-      setMessages((current) => [
-        ...current.filter((message) => message.id !== optimisticMessage.id),
-        ...result.messages,
-      ])
+      if (selectedProjectIdRef.current === projectId) {
+        setMessages((current) => [
+          ...current.filter((message) => message.id !== optimisticMessage.id),
+          ...result.messages,
+        ])
+      }
       setProjects((current) =>
         current.map((project) =>
-          project.id === selectedProject.id
+          project.id === projectId
             ? {
                 ...project,
                 file_count: (project.file_count || 0) + result.files.length,
@@ -548,11 +578,13 @@ function App() {
         ),
       )
     } catch (error) {
-      setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id))
-      setChatFiles(outgoingFiles)
-      setWorkspaceError(getErrorMessage(error))
+      if (selectedProjectIdRef.current === projectId) {
+        setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id))
+        setChatFiles(outgoingFiles)
+        setWorkspaceError(getErrorMessage(error))
+      }
     } finally {
-      setIsChatting(false)
+      setProjectPending(projectId, false)
     }
   }
 
@@ -750,7 +782,7 @@ function App() {
                   </article>
                 ))
               )}
-              {isChatting ? (
+              {selectedProjectIsChatting ? (
                 <article className="message assistant pending">
                   <div className="message-meta">
                     <span>Agent</span>
@@ -830,7 +862,7 @@ function App() {
               <button
                 aria-label="Send message"
                 className="primary send-button"
-                disabled={isChatting || (!chatInput.trim() && chatFiles.length === 0)}
+                disabled={selectedProjectIsChatting || (!chatInput.trim() && chatFiles.length === 0)}
                 type="submit"
               >
                 <Send aria-hidden="true" size={18} />
