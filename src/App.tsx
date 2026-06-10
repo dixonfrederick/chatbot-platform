@@ -230,6 +230,7 @@ function App() {
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
+  const [messagesProjectId, setMessagesProjectId] = useState<number | null>(null)
   const [newProject, setNewProject] = useState({
     description: '',
     name: '',
@@ -265,6 +266,10 @@ function App() {
   const selectedProjectIsChatting = selectedProject
     ? pendingProjectIds.has(selectedProject.id)
     : false
+  const selectedProjectMessages =
+    selectedProject && messagesProjectId === selectedProject.id ? messages : []
+  const selectedProjectDetailIsLoading =
+    selectedProject ? isDetailLoading || messagesProjectId !== selectedProject.id : false
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId
@@ -352,6 +357,7 @@ function App() {
   useEffect(() => {
     if (!token || !selectedProjectId) {
       setMessages([])
+      setMessagesProjectId(null)
       setPromptDraft('')
       setSettingsDraft({ description: '', name: '' })
       return
@@ -373,6 +379,7 @@ function App() {
         }
 
         setMessages(detail.messages)
+        setMessagesProjectId(projectId)
         setPromptDraft(detail.project.system_prompt)
         setSettingsDraft({
           description: detail.project.description,
@@ -385,6 +392,8 @@ function App() {
         )
       } catch (error) {
         if (isActive) {
+          setMessages([])
+          setMessagesProjectId(projectId)
           setWorkspaceError(getErrorMessage(error))
         }
       } finally {
@@ -548,6 +557,7 @@ function App() {
 
     setChatInput('')
     setChatFiles([])
+    setMessagesProjectId(projectId)
     setMessages((current) => [...current, optimisticMessage])
     setProjectPending(projectId, true)
     setWorkspaceError('')
@@ -561,6 +571,7 @@ function App() {
       )
 
       if (selectedProjectIdRef.current === projectId) {
+        setMessagesProjectId(projectId)
         setMessages((current) => [
           ...current.filter((message) => message.id !== optimisticMessage.id),
           ...result.messages,
@@ -579,6 +590,7 @@ function App() {
       )
     } catch (error) {
       if (selectedProjectIdRef.current === projectId) {
+        setMessagesProjectId(projectId)
         setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id))
         setChatFiles(outgoingFiles)
         setWorkspaceError(getErrorMessage(error))
@@ -759,11 +771,11 @@ function App() {
         ) : selectedProject ? (
           <section className="chat-panel" aria-label="Chat">
             <div className="message-list">
-              {isDetailLoading ? (
+              {selectedProjectDetailIsLoading ? (
                 <div className="loading-state">
                   <Loader2 aria-hidden="true" className="spin" size={24} />
                 </div>
-              ) : messages.length === 0 ? (
+              ) : selectedProjectMessages.length === 0 ? (
                 <div className="empty-chat">
                   <div className="brand-mark muted">
                     <Bot aria-hidden="true" size={28} />
@@ -772,7 +784,7 @@ function App() {
                   <p>Messages stay scoped to this agent and account.</p>
                 </div>
               ) : (
-                messages.map((message) => (
+                selectedProjectMessages.map((message) => (
                   <article className={`message ${message.role}`} key={message.id}>
                     <div className="message-meta">
                       <span>{message.role === 'assistant' ? 'Agent' : 'You'}</span>
