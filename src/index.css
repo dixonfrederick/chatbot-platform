@@ -181,6 +181,19 @@ label > span {
   top: 18px;
 }
 
+.session-loading-panel {
+  min-height: 270px;
+  align-content: center;
+}
+
+.session-loading-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted-strong);
+  font-weight: 700;
+}
+
 .brand-mark {
   display: inline-grid;
   width: 44px;

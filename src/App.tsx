@@ -288,7 +288,7 @@ function AuthScreen({
           <Bot aria-hidden="true" size={28} />
         </div>
         <div>
-          <p className="eyebrow">Chatbot YellowAI Dixon</p>
+          <p className="eyebrow">Chatbot Platform</p>
           <h1>{authMode === 'login' ? 'Sign in' : 'Create account'}</h1>
         </div>
         <div className="segmented" role="tablist" aria-label="Authentication mode">
@@ -362,6 +362,27 @@ function AuthScreen({
             {authMode === 'login' ? 'Login' : 'Create account'}
           </button>
         </form>
+      </section>
+    </main>
+  )
+}
+
+function SessionLoadingScreen({ theme, onToggleTheme }: { theme: ThemeMode; onToggleTheme: () => void }) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel session-loading-panel" aria-busy="true">
+        <ThemeSwitch className="auth-theme-toggle" onToggle={onToggleTheme} theme={theme} />
+        <div className="brand-mark">
+          <Bot aria-hidden="true" size={28} />
+        </div>
+        <div>
+          <p className="eyebrow">Chatbot Platform</p>
+          <h1>Loading workspace</h1>
+        </div>
+        <div className="session-loading-copy">
+          <Loader2 aria-hidden="true" className="spin" size={20} />
+          <span>Restoring your session...</span>
+        </div>
       </section>
     </main>
   )
@@ -441,7 +462,7 @@ function App() {
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
-  const [isBootstrapping, setIsBootstrapping] = useState(false)
+  const [isBootstrapping, setIsBootstrapping] = useState(() => Boolean(localStorage.getItem(TOKEN_KEY)))
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [isDetailLoading, setIsDetailLoading] = useState(false)
@@ -622,6 +643,7 @@ function App() {
       setProjects([])
       setRunsByProjectId({})
       setSelectedProjectId(null)
+      setIsBootstrapping(false)
       return
     }
 
@@ -1065,7 +1087,17 @@ function App() {
   function handleConfirmLogout() {
     localStorage.removeItem(TOKEN_KEY)
     setIsLogoutConfirmOpen(false)
+    setUser(null)
     setToken(null)
+  }
+
+  if (token && (!user || isBootstrapping)) {
+    return (
+      <SessionLoadingScreen
+        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+        theme={theme}
+      />
+    )
   }
 
   if (!token || !user) {
