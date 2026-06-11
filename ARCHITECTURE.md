@@ -1,11 +1,11 @@
 # Architecture
 
-Chatbot YellowAI Dixon is a single deployable Node application. During development, Vite serves the React client and proxies `/api` to Express. In production, Express serves both the built static client and the JSON API.
+Chatbot Platform is a single deployable Node application. During development, Vite serves the React client and proxies `/api` to Express. In production, Express serves both the built static client and the JSON API.
 
 ## Components
 
-- React client: Auth flow, project list, prompt editor, drag-and-drop chat attachments, and chat workspace.
-- Express API: Request validation, JWT authentication, project ownership checks, chat orchestration, and file upload handling.
+- React client: Auth flow, project list, agent settings, drag-and-drop chat attachments, mobile drawer navigation, and chat workspace.
+- Express API: Request validation, JWT authentication, project ownership checks, chat orchestration, workflow stop handling, and file upload handling.
 - Database adapter: SQLite locally, Postgres in production when `DATABASE_URL` is set.
 - OpenAI adapter: Uses the Responses API for chat and the Files API for upload sync when `LLM_PROVIDER=openai`.
 - OpenRouter adapter: Uses OpenRouter's OpenAI-compatible chat completions endpoint, including text, image, and PDF chat attachments when `LLM_PROVIDER=openrouter`.
@@ -18,6 +18,7 @@ Chatbot YellowAI Dixon is a single deployable Node application. During developme
 - `prompts`: prompt history associated with a project.
 - `messages`: project chat history with provider/model metadata.
 - `files`: metadata for files attached through chat or direct upload, plus optional `openai_file_id`.
+- `chat_runs`: current and historical response workflow state, including running, completed, failed, and cancelled runs.
 
 Every project query is scoped by `user_id`, so users cannot access each other's projects, prompts, messages, or files.
 
@@ -30,6 +31,7 @@ Every project query is scoped by `user_id`, so users cannot access each other's 
 - Helmet removes common unsafe defaults.
 - Uploads are capped at 10 MB.
 - Secrets are read from environment variables and excluded from Git.
+- Production secrets are configured through Vercel environment variables, not committed to the repository.
 
 ## Extensibility
 

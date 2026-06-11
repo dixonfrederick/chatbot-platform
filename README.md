@@ -1,6 +1,11 @@
-# Chatbot YellowAI Dixon
+# Chatbot Platform
 
 Minimal full-stack chatbot platform for the Full Stack Developer assignment.
+
+## Submission Links
+
+- Public repository: https://github.com/dixonfrederick/chatbot-yellowai-dixon
+- Hosted demo: https://chatbot-yellowai-dixon.vercel.app
 
 ## Features
 
@@ -11,6 +16,9 @@ Minimal full-stack chatbot platform for the Full Stack Developer assignment.
 - OpenRouter support with a configured free model.
 - Local demo provider when no OpenAI key is configured.
 - Drag-and-drop chat attachments with project file history.
+- Image and PDF attachment previews in chat.
+- Per-agent workflow state with stop support for in-progress responses.
+- Responsive desktop and mobile UI with light/dark mode.
 - Optional OpenAI Files API sync for uploaded files when OpenAI is enabled.
 - SQLite local persistence and Postgres production persistence with automatic schema creation.
 
@@ -89,8 +97,10 @@ After build, Express serves the Vite `dist` folder and the API from the same pro
 - `POST /api/projects/:projectId/prompts`
 - `GET /api/projects/:projectId/messages`
 - `POST /api/projects/:projectId/chat`
+- `POST /api/projects/:projectId/chat/stop`
 - `GET /api/projects/:projectId/files`
 - `POST /api/projects/:projectId/files`
+- `GET /api/projects/:projectId/files/:fileId/content`
 
 ## Deployment Notes
 
