@@ -58,6 +58,27 @@ function chatCountLabel(value: unknown) {
   return `${count} ${count === 1 ? 'chat' : 'chats'}`
 }
 
+function mergeMessagesById(
+  currentMessages: Message[],
+  incomingMessages: Message[],
+  removeMessageIds: number[] = [],
+) {
+  const skippedIds = new Set(removeMessageIds)
+  const messagesById = new Map<number, Message>()
+
+  for (const message of currentMessages) {
+    if (!skippedIds.has(message.id)) {
+      messagesById.set(message.id, message)
+    }
+  }
+
+  for (const message of incomingMessages) {
+    messagesById.set(message.id, message)
+  }
+
+  return [...messagesById.values()].sort((left, right) => left.id - right.id)
+}
+
 function getErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
     return error.detail ? `${error.message} ${error.detail}` : error.message
@@ -553,7 +574,7 @@ function App() {
 
   const applyProjectDetail = useCallback(
     (projectId: number, detail: Awaited<ReturnType<typeof api.projectDetail>>) => {
-      setMessages(detail.messages)
+      setMessages(mergeMessagesById([], detail.messages))
       setMessagesProjectId(projectId)
       setProjectRun(projectId, visibleRun(detail.run))
       setPromptDraft(detail.project.system_prompt)
@@ -994,10 +1015,9 @@ function App() {
 
       if (selectedProjectIdRef.current === projectId) {
         setMessagesProjectId(projectId)
-        setMessages((current) => [
-          ...current.filter((message) => message.id !== optimisticMessage.id),
-          ...result.messages,
-        ])
+        setMessages((current) =>
+          mergeMessagesById(current, result.messages, [optimisticMessage.id]),
+        )
       }
       setProjects((current) =>
         current.map((project) =>
