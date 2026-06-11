@@ -39,6 +39,25 @@ const MOBILE_SIDEBAR_QUERY = '(max-width: 760px)'
 type AuthMode = 'login' | 'register'
 type ThemeMode = 'dark' | 'light'
 
+function numericCount(value: unknown) {
+  const count = Number(value)
+  return Number.isFinite(count) ? count : 0
+}
+
+function normalizeProjectCounts(project: Project): Project {
+  return {
+    ...project,
+    file_count: numericCount(project.file_count),
+    message_count: numericCount(project.message_count),
+    prompt_count: numericCount(project.prompt_count),
+  }
+}
+
+function chatCountLabel(value: unknown) {
+  const count = numericCount(value)
+  return `${count} ${count === 1 ? 'chat' : 'chats'}`
+}
+
 function getErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
     return error.detail ? `${error.message} ${error.detail}` : error.message
@@ -544,7 +563,9 @@ function App() {
       })
       setProjects((current) =>
         current.map((project) =>
-          project.id === detail.project.id ? { ...project, ...detail.project } : project,
+          project.id === detail.project.id
+            ? normalizeProjectCounts({ ...project, ...detail.project })
+            : project,
         ),
       )
     },
@@ -663,15 +684,17 @@ function App() {
           return
         }
 
+        const normalizedProjects = projectResult.projects.map(normalizeProjectCounts)
+
         setUser(profile.user)
-        setProjects(projectResult.projects)
-        setRunsByProjectId(runsFromProjects(projectResult.projects))
+        setProjects(normalizedProjects)
+        setRunsByProjectId(runsFromProjects(normalizedProjects))
         setSelectedProjectId((current) => {
-          if (current && projectResult.projects.some((project) => project.id === current)) {
+          if (current && normalizedProjects.some((project) => project.id === current)) {
             return current
           }
 
-          return projectResult.projects[0]?.id || null
+          return normalizedProjects[0]?.id || null
         })
       } catch (error) {
         if (!isActive) {
@@ -822,7 +845,7 @@ function App() {
         system_prompt: newProject.system_prompt,
       })
 
-      setProjects((current) => [result.project, ...current])
+      setProjects((current) => [normalizeProjectCounts(result.project), ...current])
       setProjectRun(result.project.id, null)
       setSelectedProjectId(result.project.id)
       setNewProject({ description: '', name: '', system_prompt: '' })
@@ -856,7 +879,9 @@ function App() {
 
       setProjects((current) =>
         current.map((project) =>
-          project.id === result.project.id ? { ...project, ...result.project } : project,
+          project.id === result.project.id
+            ? normalizeProjectCounts({ ...project, ...result.project })
+            : project,
         ),
       )
       setPromptDraft(result.project.system_prompt)
@@ -979,8 +1004,8 @@ function App() {
           project.id === projectId
             ? {
                 ...project,
-                file_count: (project.file_count || 0) + result.files.length,
-                message_count: (project.message_count || 0) + result.messages.length,
+                file_count: numericCount(project.file_count) + result.files.length,
+                message_count: numericCount(project.message_count) + result.messages.length,
               }
             : project,
         ),
@@ -994,7 +1019,8 @@ function App() {
 
       if (selectedProjectIdRef.current === projectId) {
         const serverRunSettled =
-          error instanceof ApiError && (error.status === 409 || error.status === 502)
+          error instanceof ApiError &&
+          (error.status === 409 || error.status === 429 || error.status === 502)
 
         if (serverRunSettled || stoppedProjectIdsRef.current.has(projectId)) {
           try {
@@ -1204,7 +1230,7 @@ function App() {
                       ? 'failed'
                       : projectRun?.status === 'cancelled'
                         ? 'stopped'
-                        : `${project.message_count || 0} chats`
+                        : chatCountLabel(project.message_count)
 
                 return (
                   <button

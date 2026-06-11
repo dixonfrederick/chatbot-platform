@@ -6,6 +6,10 @@ import { config } from './config.js'
 const requestedProvider =
   config.llmProvider ||
   (config.openRouterApiKey ? 'openrouter' : config.openaiApiKey ? 'openai' : 'demo')
+const PROVIDER_RETRY_ATTEMPTS = 3
+const PROVIDER_RETRY_BASE_MS = 700
+const PROVIDER_RETRY_MAX_MS = 3500
+const RETRYABLE_PROVIDER_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504])
 
 const openai =
   requestedProvider === 'openai' && config.openaiApiKey
@@ -75,6 +79,40 @@ function uniqueValues(values) {
   return [...new Set(values.filter(Boolean))]
 }
 
+class ProviderRequestError extends Error {
+  constructor(message, { attempts, provider, retryable, status, detail }) {
+    super(message)
+    this.name = 'ProviderRequestError'
+    this.attempts = attempts
+    this.provider = provider
+    this.providerDetail = detail
+    this.providerStatus = status
+    this.retryable = retryable
+  }
+}
+
+function getProviderStatus(error) {
+  const status = Number(error?.providerStatus || error?.status || error?.response?.status || error?.code)
+  return Number.isFinite(status) ? status : 0
+}
+
+function getProviderDetail(error) {
+  const detail =
+    error?.providerDetail ||
+    error?.error?.message ||
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    ''
+
+  return typeof detail === 'string' ? detail : JSON.stringify(detail)
+}
+
+function isAbortProviderError(error) {
+  const message = String(error?.message || '').toLowerCase()
+  return error?.name === 'AbortError' || error?.name === 'APIUserAbortError' || message.includes('aborted')
+}
+
 function isImageEndpointError(error) {
   const message = String(error?.message || '').toLowerCase()
 
@@ -83,6 +121,133 @@ function isImageEndpointError(error) {
     message.includes('no endpoints found') &&
     message.includes('image input')
   )
+}
+
+function isRetryableProviderError(error) {
+  if (isAbortProviderError(error) || isImageEndpointError(error)) {
+    return false
+  }
+
+  const status = getProviderStatus(error)
+  const message = String(error?.message || '').toLowerCase()
+
+  if (status) {
+    return RETRYABLE_PROVIDER_STATUSES.has(status)
+  }
+
+  return message.includes('429') || message.includes('rate limit') || !error?.response
+}
+
+function headerValue(headers, name) {
+  if (!headers) {
+    return ''
+  }
+
+  if (typeof headers.get === 'function') {
+    return headers.get(name) || ''
+  }
+
+  return headers[name] || headers[name.toLowerCase()] || ''
+}
+
+function retryAfterDelayMs(error) {
+  const retryAfter = headerValue(error?.headers || error?.response?.headers, 'retry-after')
+
+  if (!retryAfter) {
+    return 0
+  }
+
+  const seconds = Number(retryAfter)
+
+  if (Number.isFinite(seconds)) {
+    return Math.min(seconds * 1000, PROVIDER_RETRY_MAX_MS)
+  }
+
+  const retryAt = Date.parse(retryAfter)
+
+  if (Number.isFinite(retryAt)) {
+    return Math.min(Math.max(retryAt - Date.now(), 0), PROVIDER_RETRY_MAX_MS)
+  }
+
+  return 0
+}
+
+function abortError() {
+  const error = new Error('Request aborted.')
+  error.name = 'AbortError'
+  return error
+}
+
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError())
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    function onAbort() {
+      clearTimeout(timeout)
+      reject(abortError())
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function providerFailureMessage(error) {
+  const status = getProviderStatus(error)
+  const detail = getProviderDetail(error).toLowerCase()
+
+  if (status === 429 || detail.includes('429') || detail.includes('rate limit')) {
+    return 'The model provider is rate limited right now.'
+  }
+
+  if (status >= 500 || status === 408 || status === 409 || status === 425) {
+    return 'The model provider is temporarily unavailable.'
+  }
+
+  return 'The model provider rejected the request.'
+}
+
+function wrapProviderError(error, provider, attempts) {
+  return new ProviderRequestError(providerFailureMessage(error), {
+    attempts,
+    detail: getProviderDetail(error),
+    provider,
+    retryable: isRetryableProviderError(error),
+    status: getProviderStatus(error),
+  })
+}
+
+async function withProviderRetry(operation, { provider, signal }) {
+  let lastError = null
+
+  for (let attempt = 1; attempt <= PROVIDER_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (isAbortProviderError(error) || isImageEndpointError(error)) {
+        throw error
+      }
+
+      lastError = error
+
+      if (!isRetryableProviderError(error) || attempt === PROVIDER_RETRY_ATTEMPTS) {
+        throw wrapProviderError(error, provider, attempt)
+      }
+
+      const backoff = Math.min(PROVIDER_RETRY_BASE_MS * 2 ** (attempt - 1), PROVIDER_RETRY_MAX_MS)
+      const jitter = Math.floor(Math.random() * 250)
+      await sleep(retryAfterDelayMs(error) || backoff + jitter, signal)
+    }
+  }
+
+  throw wrapProviderError(lastError, provider, PROVIDER_RETRY_ATTEMPTS)
 }
 
 async function readTextAttachment(file) {
@@ -263,7 +428,10 @@ export async function createAssistantReply({
       }
 
       try {
-        const response = await openRouter.chat.completions.create(payload, { signal })
+        const response = await withProviderRetry(
+          () => openRouter.chat.completions.create(payload, { signal }),
+          { provider: 'openrouter', signal },
+        )
         const choice = response.choices?.[0]?.message?.content
 
         return {
@@ -294,13 +462,17 @@ export async function createAssistantReply({
     ? await buildOpenAiUserContent(message, attachments, textContext)
     : `${message}${textContext}`
   const input = [...conversation, { role: 'user', content: userContent }]
-  const response = await openai.responses.create(
-    {
-      model: config.openaiModel,
-      instructions: project.system_prompt || undefined,
-      input,
-    },
-    { signal },
+  const response = await withProviderRetry(
+    () =>
+      openai.responses.create(
+        {
+          model: config.openaiModel,
+          instructions: project.system_prompt || undefined,
+          input,
+        },
+        { signal },
+      ),
+    { provider: 'openai', signal },
   )
 
   return {

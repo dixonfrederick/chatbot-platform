@@ -57,6 +57,20 @@ function requestBody(req) {
   return req.body && typeof req.body === 'object' ? req.body : {}
 }
 
+function numberFromCount(value) {
+  const count = Number(value)
+  return Number.isFinite(count) ? count : 0
+}
+
+function normalizeProjectSummary(project) {
+  return {
+    ...project,
+    file_count: numberFromCount(project.file_count),
+    message_count: numberFromCount(project.message_count),
+    prompt_count: numberFromCount(project.prompt_count),
+  }
+}
+
 async function getProjectForUser(projectId, userId) {
   return db.get('SELECT * FROM projects WHERE id = ? AND user_id = ?', [projectId, userId])
 }
@@ -83,7 +97,7 @@ async function markStaleRunsFailed(userId) {
 async function projectSummaryRows(userId) {
   await markStaleRunsFailed(userId)
 
-  return db.all(
+  const projects = await db.all(
     `
         SELECT
           p.*,
@@ -138,6 +152,8 @@ async function projectSummaryRows(userId) {
       `,
     [userId],
   )
+
+  return projects.map(normalizeProjectSummary)
 }
 
 async function getMessages(projectId, userId) {
@@ -334,6 +350,63 @@ async function stopRunningRun(projectId, userId) {
 function isAbortError(error) {
   const message = String(error?.message || '').toLowerCase()
   return error?.name === 'AbortError' || error?.name === 'APIUserAbortError' || message.includes('aborted')
+}
+
+function providerStatusFromError(error) {
+  const status = Number(error?.providerStatus || error?.status || error?.response?.status || error?.code)
+  return Number.isFinite(status) ? status : 0
+}
+
+function providerDetailFromError(error) {
+  const detail =
+    error?.providerDetail ||
+    error?.error?.message ||
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    ''
+
+  return typeof detail === 'string' ? detail.replace(/\s+/g, ' ').trim() : JSON.stringify(detail)
+}
+
+function chatFailureResponse(error) {
+  const status = providerStatusFromError(error)
+  const detail = providerDetailFromError(error)
+  const lowerDetail = detail.toLowerCase()
+
+  if (status === 429 || lowerDetail.includes('429') || lowerDetail.includes('rate limit')) {
+    return {
+      detail: '',
+      error:
+        'The model provider is rate limited right now. I retried the request a few times, but it is still busy. Please wait a moment and send again.',
+      statusCode: 429,
+    }
+  }
+
+  if (lowerDetail.includes('no endpoints found') && lowerDetail.includes('image input')) {
+    return {
+      detail:
+        'The current OpenRouter model does not expose a working vision endpoint for this request.',
+      error:
+        'This model cannot read image attachments right now. Switch to a vision-capable model or send the image content as text.',
+      statusCode: 502,
+    }
+  }
+
+  if (status >= 500 || status === 408 || status === 409 || status === 425) {
+    return {
+      detail: '',
+      error:
+        'The model provider is temporarily unavailable. I retried the request, but it still failed. Please try again in a moment.',
+      statusCode: 502,
+    }
+  }
+
+  return {
+    detail: detail ? `Provider message: ${detail.slice(0, 280)}` : '',
+    error: 'The model provider rejected this request.',
+    statusCode: 502,
+  }
 }
 
 async function getFiles(projectId, userId, options = {}) {
@@ -799,8 +872,9 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
         })
       }
 
+      const failure = chatFailureResponse(error)
       const run = await markRun(runId, req.user.id, 'failed', {
-        error: error.message || 'The model request failed.',
+        error: failure.error,
       })
 
       if (projectId) {
@@ -814,9 +888,9 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
         )
       }
 
-      return res.status(502).json({
-        error: 'The LLM provider could not complete the request.',
-        detail: error.message,
+      return res.status(failure.statusCode).json({
+        error: failure.error,
+        detail: failure.detail,
         files: savedFiles,
         messages: userMessage ? [userMessage] : [],
         run,
@@ -824,9 +898,10 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
     }
 
     if (getLlmStatus().provider !== 'demo') {
-      return res.status(502).json({
-        error: 'The LLM provider could not complete the request.',
-        detail: error.message,
+      const failure = chatFailureResponse(error)
+      return res.status(failure.statusCode).json({
+        error: failure.error,
+        detail: failure.detail,
       })
     }
     return next(error)

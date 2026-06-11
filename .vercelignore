@@ -3,6 +3,7 @@ dist
 logs
 data
 uploads
+deliverables
 .env
 .env.*
 *.local
