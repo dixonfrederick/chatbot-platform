@@ -71,6 +71,20 @@ function isPdfFile(file) {
   return file.mimetype === 'application/pdf'
 }
 
+function uniqueValues(values) {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function isImageEndpointError(error) {
+  const message = String(error?.message || '').toLowerCase()
+
+  return (
+    Number(error?.status || error?.code) === 404 &&
+    message.includes('no endpoints found') &&
+    message.includes('image input')
+  )
+}
+
 async function readTextAttachment(file) {
   if (!isReadableTextFile(file)) {
     return ''
@@ -96,6 +110,11 @@ async function buildTextAttachmentContext(attachments) {
   return blocks.length ? `\n\nAttached file context:\n${blocks.join('\n\n---\n\n')}` : ''
 }
 
+async function readAttachmentDataUrl(file) {
+  const base64 = (await readFile(file.path)).toString('base64')
+  return `data:${file.mimetype};base64,${base64}`
+}
+
 async function buildOpenRouterUserContent(message, attachments) {
   const textContext = await buildTextAttachmentContext(attachments)
   const content = [
@@ -110,8 +129,7 @@ async function buildOpenRouterUserContent(message, attachments) {
       continue
     }
 
-    const base64 = (await readFile(file.path)).toString('base64')
-    const dataUrl = `data:${file.mimetype};base64,${base64}`
+    const dataUrl = await readAttachmentDataUrl(file)
 
     if (isImageFile(file)) {
       content.push({
@@ -131,6 +149,28 @@ async function buildOpenRouterUserContent(message, attachments) {
         },
       })
     }
+  }
+
+  return content
+}
+
+async function buildOpenAiUserContent(message, attachments, textContext) {
+  const content = [
+    {
+      type: 'input_text',
+      text: `${message}${textContext}`,
+    },
+  ]
+
+  for (const file of attachments) {
+    if (!isImageFile(file)) {
+      continue
+    }
+
+    content.push({
+      type: 'input_image',
+      image_url: await readAttachmentDataUrl(file),
+    })
   }
 
   return content
@@ -185,6 +225,14 @@ export async function createAssistantReply({
   ]
 
   if (openRouter) {
+    const hasImageAttachment = attachments.some(isImageFile)
+    const openRouterModels = hasImageAttachment
+      ? uniqueValues([
+          config.openRouterVisionModel,
+          'nvidia/nemotron-nano-12b-v2-vl:free',
+          'nex-agi/nex-n2-pro:free',
+        ])
+      : [config.openRouterModel]
     const userContent =
       attachments.length > 0 ? await buildOpenRouterUserContent(message, attachments) : message
     const messages = [
@@ -195,37 +243,57 @@ export async function createAssistantReply({
       { role: 'user', content: userContent },
     ]
 
-    const payload = {
-      messages,
-      model: config.openRouterModel,
-    }
+    let lastImageError = null
 
-    if (attachments.some(isPdfFile)) {
-      payload.plugins = [
-        {
-          id: 'file-parser',
-          pdf: {
-            engine: 'cloudflare-ai',
+    for (const openRouterModel of openRouterModels) {
+      const payload = {
+        messages,
+        model: openRouterModel,
+      }
+
+      if (attachments.some(isPdfFile)) {
+        payload.plugins = [
+          {
+            id: 'file-parser',
+            pdf: {
+              engine: 'cloudflare-ai',
+            },
           },
-        },
-      ]
+        ]
+      }
+
+      try {
+        const response = await openRouter.chat.completions.create(payload, { signal })
+        const choice = response.choices?.[0]?.message?.content
+
+        return {
+          content:
+            (typeof choice === 'string' ? choice.trim() : '') ||
+            'The model completed the request but did not return text output.',
+          provider: 'openrouter',
+          model: response.model || openRouterModel,
+          responseId: response.id || '',
+        }
+      } catch (error) {
+        if (!hasImageAttachment || !isImageEndpointError(error)) {
+          throw error
+        }
+
+        lastImageError = error
+      }
     }
 
-    const response = await openRouter.chat.completions.create(payload, { signal })
-    const choice = response.choices?.[0]?.message?.content
-
-    return {
-      content:
-        (typeof choice === 'string' ? choice.trim() : '') ||
-        'The model completed the request but did not return text output.',
-      provider: 'openrouter',
-      model: response.model || config.openRouterModel,
-      responseId: response.id || '',
+    if (lastImageError) {
+      throw lastImageError
     }
   }
 
+  const hasImageAttachment = attachments.some(isImageFile)
   const textContext = await buildTextAttachmentContext(attachments)
-  const input = [...conversation, { role: 'user', content: `${message}${textContext}` }]
+  const userContent = hasImageAttachment
+    ? await buildOpenAiUserContent(message, attachments, textContext)
+    : `${message}${textContext}`
+  const input = [...conversation, { role: 'user', content: userContent }]
   const response = await openai.responses.create(
     {
       model: config.openaiModel,

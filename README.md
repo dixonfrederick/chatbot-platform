@@ -73,6 +73,7 @@ After build, Express serves the Vite `dist` folder and the API from the same pro
 | `OPENAI_MODEL` | No | `gpt-5-mini` | Model used for chat responses |
 | `OPENROUTER_API_KEY` | No | empty | Enables OpenRouter chat completions |
 | `OPENROUTER_MODEL` | No | `openai/gpt-oss-20b:free` | OpenRouter model |
+| `OPENROUTER_VISION_MODEL` | No | `openrouter/free` | OpenRouter model/router used when image attachments are sent |
 | `CLIENT_ORIGIN` | No | `http://localhost:5173` | Dev CORS origin |
 
 ## API Summary

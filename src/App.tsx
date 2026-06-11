@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Bot,
+  FileImage,
   FileText,
   FolderKanban,
   Loader2,
@@ -9,6 +10,8 @@ import {
   Mail,
   MessageSquare,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Paperclip,
   Plus,
   Save,
@@ -26,10 +29,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import { ApiError, api } from './api'
-import type { ChatRun, Health, Message, Project, User as AuthUser } from './types'
+import type { ChatRun, FileRecord, Health, Message, Project, User as AuthUser } from './types'
 
 const TOKEN_KEY = 'chatbot_platform_token'
 const THEME_KEY = 'chatbot_platform_theme'
+const SIDEBAR_KEY = 'chatbot_platform_sidebar_open'
+const MOBILE_SIDEBAR_QUERY = '(max-width: 760px)'
 
 type AuthMode = 'login' | 'register'
 type ThemeMode = 'dark' | 'light'
@@ -58,10 +63,50 @@ function formatBytes(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function isImageMimeType(mimeType: string) {
+  return mimeType.startsWith('image/')
+}
+
+function fileKindLabel(file: Pick<FileRecord, 'mime_type'>) {
+  if (isImageMimeType(file.mime_type)) {
+    return 'Image'
+  }
+
+  if (file.mime_type === 'application/pdf') {
+    return 'PDF'
+  }
+
+  if (file.mime_type.startsWith('text/')) {
+    return 'Text'
+  }
+
+  return 'File'
+}
+
+function getMessageDisplayContent(message: Message) {
+  if (message.role !== 'user') {
+    return message.content
+  }
+
+  return message.content.replace(/\n{2,}Attached:\s*.+$/s, '').trim()
+}
+
 function resetDocumentScroll() {
   document.documentElement.scrollTop = 0
   document.body.scrollTop = 0
   window.scrollTo({ left: 0, top: 0 })
+}
+
+function isMobileViewport() {
+  return window.matchMedia(MOBILE_SIDEBAR_QUERY).matches
+}
+
+function visibleRun(run: ChatRun | null) {
+  if (!run || (run.status !== 'running' && run.status !== 'failed')) {
+    return null
+  }
+
+  return run
 }
 
 function runFromProject(project: Project): ChatRun | null {
@@ -69,7 +114,7 @@ function runFromProject(project: Project): ChatRun | null {
     return null
   }
 
-  return {
+  return visibleRun({
     assistant_message_id: null,
     completed_at: project.latest_run_completed_at || null,
     created_at: project.latest_run_created_at || project.updated_at,
@@ -83,7 +128,7 @@ function runFromProject(project: Project): ChatRun | null {
     updated_at: project.latest_run_updated_at || project.updated_at,
     user_id: project.user_id,
     user_message_id: null,
-  }
+  })
 }
 
 function runsFromProjects(projects: Project[]) {
@@ -91,6 +136,127 @@ function runsFromProjects(projects: Project[]) {
     runs[project.id] = runFromProject(project)
     return runs
   }, {})
+}
+
+function ThemeSwitch({
+  className = '',
+  onToggle,
+  theme,
+}: {
+  className?: string
+  onToggle: () => void
+  theme: ThemeMode
+}) {
+  const isDark = theme === 'dark'
+
+  return (
+    <button
+      aria-checked={isDark}
+      aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+      className={`theme-switch ${className}`.trim()}
+      onClick={onToggle}
+      role="switch"
+      title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+      type="button"
+    >
+      <Sun aria-hidden="true" size={14} />
+      <span className="theme-switch-track">
+        <span className="theme-switch-thumb" />
+      </span>
+      <Moon aria-hidden="true" size={14} />
+    </button>
+  )
+}
+
+function AttachmentImagePreview({ file, token }: { file: FileRecord; token: string }) {
+  const [source, setSource] = useState(file.preview_url || '')
+  const [hasError, setHasError] = useState(false)
+
+  useEffect(() => {
+    setSource(file.preview_url || '')
+    setHasError(false)
+  }, [file.id, file.preview_url])
+
+  useEffect(() => {
+    if (file.preview_url || file.id < 0 || !isImageMimeType(file.mime_type)) {
+      return
+    }
+
+    let isMounted = true
+    let objectUrl = ''
+
+    api
+      .fileBlob(token, file.project_id, file.id)
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob)
+
+        if (isMounted) {
+          setSource(objectUrl)
+        } else {
+          URL.revokeObjectURL(objectUrl)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setHasError(true)
+        }
+      })
+
+    return () => {
+      isMounted = false
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [file.id, file.mime_type, file.preview_url, file.project_id, token])
+
+  if (source && !hasError) {
+    return <img alt={file.original_name} src={source} />
+  }
+
+  return (
+    <div className="attachment-preview-placeholder">
+      <FileImage aria-hidden="true" size={24} />
+    </div>
+  )
+}
+
+function MessageAttachments({ attachments, token }: { attachments: FileRecord[]; token: string }) {
+  if (attachments.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="message-attachments">
+      {attachments.map((file) => {
+        const isImage = isImageMimeType(file.mime_type)
+
+        return (
+          <figure
+            className={isImage ? 'message-attachment image-attachment' : 'message-attachment'}
+            key={file.id}
+          >
+            {isImage ? (
+              <div className="attachment-image-frame">
+                <AttachmentImagePreview file={file} token={token} />
+              </div>
+            ) : (
+              <div className="attachment-file-icon">
+                <FileText aria-hidden="true" size={20} />
+              </div>
+            )}
+            <figcaption>
+              <strong title={file.original_name}>{file.original_name}</strong>
+              <span>
+                {fileKindLabel(file)} / {formatBytes(file.size)}
+              </span>
+            </figcaption>
+          </figure>
+        )
+      })}
+    </div>
+  )
 }
 
 function AuthScreen({
@@ -117,19 +283,7 @@ function AuthScreen({
   return (
     <main className="auth-shell">
       <section className="auth-panel">
-        <button
-          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          className="icon-button auth-theme-toggle"
-          onClick={onToggleTheme}
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          type="button"
-        >
-          {theme === 'dark' ? (
-            <Sun aria-hidden="true" size={18} />
-          ) : (
-            <Moon aria-hidden="true" size={18} />
-          )}
-        </button>
+        <ThemeSwitch className="auth-theme-toggle" onToggle={onToggleTheme} theme={theme} />
         <div className="brand-mark">
           <Bot aria-hidden="true" size={28} />
         </div>
@@ -244,16 +398,8 @@ function MessageMarkdown({ content }: { content: string }) {
   )
 }
 
-function RunStatusCard({
-  isStopping,
-  onStop,
-  run,
-}: {
-  isStopping: boolean
-  onStop: () => void
-  run: ChatRun
-}) {
-  if (run.status === 'completed') {
+function RunStatusCard({ run }: { run: ChatRun }) {
+  if (run.status !== 'running' && run.status !== 'failed') {
     return null
   }
 
@@ -267,30 +413,20 @@ function RunStatusCard({
         <div className="run-status-body">
           <Loader2 aria-hidden="true" className="spin" size={18} />
           <span>Working on this request.</span>
-          <button className="secondary stop-button" disabled={isStopping} onClick={onStop} type="button">
-            {isStopping ? (
-              <Loader2 aria-hidden="true" className="spin" size={16} />
-            ) : (
-              <Square aria-hidden="true" size={15} />
-            )}
-            Stop
-          </button>
         </div>
       </article>
     )
   }
 
-  const isFailed = run.status === 'failed'
-
   return (
-    <article className={`message assistant run-status ${isFailed ? 'failed' : 'stopped'}`}>
+    <article className="message assistant run-status failed">
       <div className="message-meta">
         <span>Agent</span>
-        <small>{isFailed ? 'failed' : 'stopped'}</small>
+        <small>failed</small>
       </div>
       <div className="run-status-body">
         <AlertCircle aria-hidden="true" size={18} />
-        <span>{isFailed ? run.error || 'The workflow failed.' : 'Workflow stopped.'}</span>
+        <span>{run.error || 'The workflow failed.'}</span>
       </div>
     </article>
   )
@@ -311,6 +447,15 @@ function App() {
   const [isDetailLoading, setIsDetailLoading] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (isMobileViewport()) {
+      return false
+    }
+
+    return localStorage.getItem(SIDEBAR_KEY) !== 'false'
+  })
   const [messages, setMessages] = useState<Message[]>([])
   const [messagesProjectId, setMessagesProjectId] = useState<number | null>(null)
   const [newProject, setNewProject] = useState({
@@ -336,10 +481,12 @@ function App() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   })
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
+  const [toastMessage, setToastMessage] = useState('')
   const [user, setUser] = useState<AuthUser | null>(null)
   const [workspaceError, setWorkspaceError] = useState('')
   const [stoppingProjectIds, setStoppingProjectIds] = useState<Set<number>>(() => new Set())
   const chatFileInputRef = useRef<HTMLInputElement | null>(null)
+  const messageListRef = useRef<HTMLDivElement | null>(null)
   const selectedProjectIdRef = useRef<number | null>(selectedProjectId)
   const stoppedProjectIdsRef = useRef<Set<number>>(new Set())
 
@@ -368,7 +515,7 @@ function App() {
     (projectId: number, detail: Awaited<ReturnType<typeof api.projectDetail>>) => {
       setMessages(detail.messages)
       setMessagesProjectId(projectId)
-      setProjectRun(projectId, detail.run)
+      setProjectRun(projectId, visibleRun(detail.run))
       setPromptDraft(detail.project.system_prompt)
       setSettingsDraft({
         description: detail.project.description,
@@ -388,6 +535,31 @@ function App() {
   }, [selectedProjectId])
 
   useLayoutEffect(() => {
+    if (selectedProjectDetailIsLoading) {
+      return
+    }
+
+    const messageList = messageListRef.current
+
+    if (!messageList) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      messageList.scrollTop = messageList.scrollHeight
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [
+    messagesProjectId,
+    selectedProjectDetailIsLoading,
+    selectedProjectId,
+    selectedProjectMessages.length,
+    selectedProjectRun?.id,
+    selectedProjectRun?.status,
+  ])
+
+  useLayoutEffect(() => {
     if ('scrollRestoration' in window.history) {
       window.history.scrollRestoration = 'manual'
     }
@@ -403,6 +575,39 @@ function App() {
     document.documentElement.dataset.theme = theme
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_KEY, String(isSidebarOpen))
+  }, [isSidebarOpen])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(MOBILE_SIDEBAR_QUERY)
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        setIsSidebarOpen(false)
+      }
+    }
+
+    mediaQuery.addEventListener('change', handleViewportChange)
+
+    return () => mediaQuery.removeEventListener('change', handleViewportChange)
+  }, [])
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setIsSettingsOpen(false)
+    }
+  }, [selectedProject])
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => setToastMessage(''), 2600)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [toastMessage])
 
   useEffect(() => {
     api
@@ -599,6 +804,10 @@ function App() {
       setProjectRun(result.project.id, null)
       setSelectedProjectId(result.project.id)
       setNewProject({ description: '', name: '', system_prompt: '' })
+
+      if (isMobileViewport()) {
+        setIsSidebarOpen(false)
+      }
     } catch (error) {
       setWorkspaceError(getErrorMessage(error))
     } finally {
@@ -629,6 +838,7 @@ function App() {
         ),
       )
       setPromptDraft(result.project.system_prompt)
+      setToastMessage('Agent settings saved.')
     } catch (error) {
       setWorkspaceError(getErrorMessage(error))
     } finally {
@@ -669,13 +879,33 @@ function App() {
     const projectId = selectedProject.id
     const outgoing = chatInput.trim()
     const outgoingFiles = chatFiles
-    const attachmentLine = outgoingFiles.length
-      ? `\n\nAttached: ${outgoingFiles.map((file) => file.name).join(', ')}`
-      : ''
+    const optimisticMessageId = -Date.now()
+    const optimisticPreviewUrls: string[] = []
+    const optimisticAttachments: FileRecord[] = outgoingFiles.map((file, index) => {
+      const previewUrl = isImageMimeType(file.type) ? URL.createObjectURL(file) : ''
+
+      if (previewUrl) {
+        optimisticPreviewUrls.push(previewUrl)
+      }
+
+      return {
+        created_at: new Date().toISOString(),
+        id: optimisticMessageId - index - 1,
+        message_id: optimisticMessageId,
+        mime_type: file.type || 'application/octet-stream',
+        openai_file_id: '',
+        original_name: file.name,
+        preview_url: previewUrl,
+        project_id: projectId,
+        size: file.size,
+        upload_error: '',
+      }
+    })
     const optimisticMessage: Message = {
-      content: `${outgoing || 'Please analyze the attached file.'}${attachmentLine}`,
+      attachments: optimisticAttachments,
+      content: outgoing || 'Please analyze the attached file.',
       created_at: new Date().toISOString(),
-      id: -Date.now(),
+      id: optimisticMessageId,
       model: '',
       project_id: projectId,
       provider: 'user',
@@ -713,7 +943,7 @@ function App() {
         outgoingFiles,
       )
 
-      setProjectRun(projectId, result.run)
+      setProjectRun(projectId, visibleRun(result.run))
 
       if (selectedProjectIdRef.current === projectId) {
         setMessagesProjectId(projectId)
@@ -737,7 +967,7 @@ function App() {
       const payload = error instanceof ApiError ? (error.payload as { run?: ChatRun }) : null
 
       if (payload?.run) {
-        setProjectRun(projectId, payload.run)
+        setProjectRun(projectId, visibleRun(payload.run))
       }
 
       if (selectedProjectIdRef.current === projectId) {
@@ -760,6 +990,7 @@ function App() {
         }
       }
     } finally {
+      optimisticPreviewUrls.forEach((previewUrl) => URL.revokeObjectURL(previewUrl))
       stoppedProjectIdsRef.current.delete(projectId)
     }
   }
@@ -777,7 +1008,7 @@ function App() {
     try {
       const result = await api.stopChat(token, projectId)
 
-      setProjectRun(projectId, result.run)
+      setProjectRun(projectId, visibleRun(result.run))
 
       if (selectedProjectIdRef.current === projectId) {
         const detail = await api.projectDetail(token, projectId)
@@ -818,6 +1049,7 @@ function App() {
         delete next[projectId]
         return next
       })
+      setIsSettingsOpen(false)
       setDeleteProjectTarget(null)
     } catch (error) {
       setWorkspaceError(getErrorMessage(error))
@@ -826,8 +1058,13 @@ function App() {
     }
   }
 
-  function handleLogout() {
+  function handleRequestLogout() {
+    setIsLogoutConfirmOpen(true)
+  }
+
+  function handleConfirmLogout() {
     localStorage.removeItem(TOKEN_KEY)
+    setIsLogoutConfirmOpen(false)
     setToken(null)
   }
 
@@ -854,118 +1091,182 @@ function App() {
 
   return (
     <>
-      <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <div className="brand-mark">
-            <Bot aria-hidden="true" size={24} />
-          </div>
-          <div>
-            <strong>Chatbot YellowAI Dixon</strong>
-            <span>{health ? `${health.provider} / ${health.model}` : 'checking provider'}</span>
-          </div>
-        </div>
-
-        <form className="new-project-form" onSubmit={handleCreateProject}>
-          <label>
-            <span>New agent</span>
-            <input
-              onChange={(event) =>
-                setNewProject((current) => ({ ...current, name: event.target.value }))
-              }
-              placeholder="Support copilot"
-              value={newProject.name}
-            />
-          </label>
-          <label>
-            <span>Description</span>
-            <input
-              onChange={(event) =>
-                setNewProject((current) => ({ ...current, description: event.target.value }))
-              }
-              placeholder="Customer support workflow"
-              value={newProject.description}
-            />
-          </label>
-          <label>
-            <span>Instructions</span>
-            <textarea
-              onChange={(event) =>
-                setNewProject((current) => ({ ...current, system_prompt: event.target.value }))
-              }
-              placeholder="Set the agent's role, tone, and rules."
-              rows={4}
-              value={newProject.system_prompt}
-            />
-          </label>
-          <button className="primary wide" disabled={isCreatingProject} type="submit">
-            {isCreatingProject ? (
-              <Loader2 aria-hidden="true" className="spin" size={18} />
-            ) : (
-              <Plus aria-hidden="true" size={18} />
-            )}
-            Create
-          </button>
-        </form>
-
-        <nav className="project-list" aria-label="Agents">
-          {projects.map((project) => {
-            const projectRun = runsByProjectId[project.id]
-            const projectStatus =
-              projectRun?.status === 'running'
-                ? 'thinking'
-                : projectRun?.status === 'failed'
-                  ? 'failed'
-                  : projectRun?.status === 'cancelled'
-                    ? 'stopped'
-                    : `${project.message_count || 0} chats`
-
-            return (
+      <div className={isSidebarOpen ? 'app-shell' : 'app-shell sidebar-collapsed'}>
+      {isSidebarOpen ? (
+        <>
+          <button
+            aria-label="Close sidebar"
+            className="mobile-sidebar-backdrop"
+            onClick={() => setIsSidebarOpen(false)}
+            type="button"
+          />
+          <aside className="sidebar">
+            <div className="sidebar-brand">
+              <div className="brand-mark">
+                <Bot aria-hidden="true" size={24} />
+              </div>
+              <div className="sidebar-brand-copy">
+                <strong>Chatbot Platform</strong>
+                <span>{health?.provider || 'openrouter'}</span>
+              </div>
               <button
-                className={project.id === selectedProjectId ? 'project-item active' : 'project-item'}
-                key={project.id}
-                onClick={() => setSelectedProjectId(project.id)}
+                aria-label="Close sidebar"
+                className="icon-button sidebar-toggle"
+                onClick={() => setIsSidebarOpen(false)}
+                title="Close sidebar"
                 type="button"
               >
-                <FolderKanban aria-hidden="true" size={18} />
-                <span>
-                  <strong>{project.name}</strong>
-                  <small>{projectStatus}</small>
-                </span>
+                <PanelLeftClose aria-hidden="true" size={18} />
               </button>
-            )
-          })}
-        </nav>
-      </aside>
+            </div>
+
+            <form className="new-project-form" onSubmit={handleCreateProject}>
+              <label>
+                <span>New agent</span>
+                <input
+                  onChange={(event) =>
+                    setNewProject((current) => ({ ...current, name: event.target.value }))
+                  }
+                  placeholder="Support copilot"
+                  value={newProject.name}
+                />
+              </label>
+              <label>
+                <span>Description</span>
+                <input
+                  onChange={(event) =>
+                    setNewProject((current) => ({ ...current, description: event.target.value }))
+                  }
+                  placeholder="Customer support workflow"
+                  value={newProject.description}
+                />
+              </label>
+              <label>
+                <span>Instructions</span>
+                <textarea
+                  onChange={(event) =>
+                    setNewProject((current) => ({ ...current, system_prompt: event.target.value }))
+                  }
+                  placeholder="Set the agent's role, tone, and rules."
+                  rows={4}
+                  value={newProject.system_prompt}
+                />
+              </label>
+              <button className="primary wide" disabled={isCreatingProject} type="submit">
+                {isCreatingProject ? (
+                  <Loader2 aria-hidden="true" className="spin" size={18} />
+                ) : (
+                  <Plus aria-hidden="true" size={18} />
+                )}
+                Create
+              </button>
+            </form>
+
+            <nav className="project-list" aria-label="Agents">
+              {projects.map((project) => {
+                const projectRun = runsByProjectId[project.id]
+                const projectStatus =
+                  projectRun?.status === 'running'
+                    ? 'thinking'
+                    : projectRun?.status === 'failed'
+                      ? 'failed'
+                      : projectRun?.status === 'cancelled'
+                        ? 'stopped'
+                        : `${project.message_count || 0} chats`
+
+                return (
+                  <button
+                    className={project.id === selectedProjectId ? 'project-item active' : 'project-item'}
+                    key={project.id}
+                    onClick={() => {
+                      setSelectedProjectId(project.id)
+
+                      if (isMobileViewport()) {
+                        setIsSidebarOpen(false)
+                      }
+                    }}
+                    type="button"
+                  >
+                    <FolderKanban aria-hidden="true" size={18} />
+                    <span>
+                      <strong>{project.name}</strong>
+                      <small>{projectStatus}</small>
+                    </span>
+                  </button>
+                )
+              })}
+            </nav>
+
+            <footer className="sidebar-footer">
+              <div className="account-avatar" aria-hidden="true">
+                {user.name.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="sidebar-footer-copy">
+                <strong>{user.name}</strong>
+                <span>{user.email}</span>
+              </div>
+              <button
+                aria-label="Logout"
+                className="icon-button"
+                onClick={handleRequestLogout}
+                title="Logout"
+                type="button"
+              >
+                <LogOut aria-hidden="true" size={18} />
+              </button>
+            </footer>
+          </aside>
+        </>
+      ) : (
+        <aside className="sidebar-rail" aria-label="Sidebar">
+          <button
+            aria-label="Open sidebar"
+            className="icon-button"
+            onClick={() => setIsSidebarOpen(true)}
+            title="Open sidebar"
+            type="button"
+          >
+            <PanelLeftOpen aria-hidden="true" size={18} />
+          </button>
+        </aside>
+      )}
 
       <main className="workspace">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">
-              <MessageSquare aria-hidden="true" size={16} />
-              Chat workspace
-            </p>
-            <h1>{selectedProject?.name || 'Agent workspace'}</h1>
-            <p>{selectedProject?.description || 'No description set'}</p>
+          <button
+            aria-label="Open sidebar"
+            className="icon-button mobile-sidebar-button"
+            onClick={() => setIsSidebarOpen(true)}
+            title="Open sidebar"
+            type="button"
+          >
+            <PanelLeftOpen aria-hidden="true" size={18} />
+          </button>
+          <div className="topbar-main">
+            <div className="topbar-title">
+              <p className="eyebrow">
+                <MessageSquare aria-hidden="true" size={16} />
+                Chat workspace
+              </p>
+              <h1>{selectedProject?.name || 'Agent workspace'}</h1>
+              <p>{selectedProject?.description || 'No description set'}</p>
+            </div>
           </div>
           <div className="account-menu">
-            <span>{user.name}</span>
             <button
-              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              aria-label="Open settings"
               className="icon-button"
-              onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              disabled={!selectedProject}
+              onClick={() => setIsSettingsOpen(true)}
+              title="Open settings"
               type="button"
             >
-              {theme === 'dark' ? (
-                <Sun aria-hidden="true" size={18} />
-              ) : (
-                <Moon aria-hidden="true" size={18} />
-              )}
+              <Settings aria-hidden="true" size={18} />
             </button>
-            <button aria-label="Logout" className="icon-button" onClick={handleLogout} type="button">
-              <LogOut aria-hidden="true" size={18} />
-            </button>
+            <ThemeSwitch
+              onToggle={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+              theme={theme}
+            />
           </div>
         </header>
 
@@ -982,7 +1283,7 @@ function App() {
           </div>
         ) : selectedProject ? (
           <section className="chat-panel" aria-label="Chat">
-            <div className="message-list">
+            <div className="message-list" ref={messageListRef}>
               {selectedProjectDetailIsLoading ? (
                 <div className="loading-state">
                   <Loader2 aria-hidden="true" className="spin" size={24} />
@@ -996,22 +1297,23 @@ function App() {
                   <p>Messages stay scoped to this agent and account.</p>
                 </div>
               ) : (
-                selectedProjectMessages.map((message) => (
-                  <article className={`message ${message.role}`} key={message.id}>
-                    <div className="message-meta">
-                      <span>{message.role === 'assistant' ? 'Agent' : 'You'}</span>
-                      {message.provider !== 'user' ? <small>{message.model || message.provider}</small> : null}
-                    </div>
-                    <MessageMarkdown content={message.content} />
-                  </article>
-                ))
+                selectedProjectMessages.map((message) => {
+                  const displayContent = getMessageDisplayContent(message)
+
+                  return (
+                    <article className={`message ${message.role}`} key={message.id}>
+                      <div className="message-meta">
+                        <span>{message.role === 'assistant' ? 'Agent' : 'You'}</span>
+                        {message.provider !== 'user' ? <small>{message.model || message.provider}</small> : null}
+                      </div>
+                      {displayContent ? <MessageMarkdown content={displayContent} /> : null}
+                      <MessageAttachments attachments={message.attachments || []} token={token} />
+                    </article>
+                  )
+                })
               )}
-              {selectedProjectRun && selectedProjectRun.status !== 'completed' ? (
-                <RunStatusCard
-                  isStopping={selectedProjectIsStopping}
-                  onStop={handleStopWorkflow}
-                  run={selectedProjectRun}
-                />
+              {selectedProjectRun ? (
+                <RunStatusCard run={selectedProjectRun} />
               ) : null}
             </div>
 
@@ -1059,7 +1361,11 @@ function App() {
                   <div className="attachment-chips">
                     {chatFiles.map((file, index) => (
                       <span className="attachment-chip" key={`${file.name}-${file.lastModified}`}>
-                        <FileText aria-hidden="true" size={15} />
+                        {isImageMimeType(file.type) ? (
+                          <FileImage aria-hidden="true" size={15} />
+                        ) : (
+                          <FileText aria-hidden="true" size={15} />
+                        )}
                         <strong title={file.name}>{file.name}</strong>
                         <small>{formatBytes(file.size)}</small>
                         <button
@@ -1082,12 +1388,26 @@ function App() {
                 />
               </div>
               <button
-                aria-label="Send message"
-                className="primary send-button"
-                disabled={selectedProjectIsChatting || (!chatInput.trim() && chatFiles.length === 0)}
-                type="submit"
+                aria-label={selectedProjectIsChatting ? 'Stop response' : 'Send message'}
+                className={selectedProjectIsChatting ? 'primary send-button stop-state' : 'primary send-button'}
+                disabled={
+                  selectedProjectIsChatting
+                    ? selectedProjectIsStopping
+                    : !chatInput.trim() && chatFiles.length === 0
+                }
+                onClick={selectedProjectIsChatting ? handleStopWorkflow : undefined}
+                title={selectedProjectIsChatting ? 'Stop response' : 'Send message'}
+                type={selectedProjectIsChatting ? 'button' : 'submit'}
               >
-                <Send aria-hidden="true" size={18} />
+                {selectedProjectIsChatting ? (
+                  selectedProjectIsStopping ? (
+                    <Loader2 aria-hidden="true" className="spin" size={18} />
+                  ) : (
+                    <Square aria-hidden="true" size={18} />
+                  )
+                ) : (
+                  <Send aria-hidden="true" size={18} />
+                )}
               </button>
             </form>
           </section>
@@ -1096,77 +1416,132 @@ function App() {
         )}
       </main>
 
-      <aside className="inspector">
-        {selectedProject ? (
-          <>
-            <section className="inspector-section">
+      </div>
+
+      {isSettingsOpen && selectedProject ? (
+        <div
+          aria-labelledby="settings-drawer-title"
+          aria-modal="true"
+          className="drawer-backdrop"
+          onClick={() => setIsSettingsOpen(false)}
+          role="dialog"
+        >
+          <aside className="settings-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="drawer-header">
               <div className="section-title">
                 <Settings aria-hidden="true" size={18} />
-                <h2>Settings</h2>
+                <h2 id="settings-drawer-title">Agent settings</h2>
               </div>
-              <form className="stack" onSubmit={handleSaveSettings}>
-                <label>
-                  <span>Name</span>
-                  <input
-                    onChange={(event) =>
-                      setSettingsDraft((current) => ({
-                        ...current,
-                        name: event.target.value,
-                      }))
-                    }
-                    value={settingsDraft.name}
-                  />
-                </label>
-                <label>
-                  <span>Description</span>
-                  <textarea
-                    onChange={(event) =>
-                      setSettingsDraft((current) => ({
-                        ...current,
-                        description: event.target.value,
-                      }))
-                    }
-                    rows={3}
-                    value={settingsDraft.description}
-                  />
-                </label>
-                <label>
-                  <span>Instructions</span>
-                  <textarea
-                    className="prompt-box"
-                    onChange={(event) => setPromptDraft(event.target.value)}
-                    placeholder="Set the agent's role, tone, and rules."
-                    rows={7}
-                    value={promptDraft}
-                  />
-                </label>
-                <div className="button-row">
-                  <button className="secondary" disabled={isSavingSettings} type="submit">
-                    {isSavingSettings ? (
-                      <Loader2 aria-hidden="true" className="spin" size={18} />
-                    ) : (
-                      <Save aria-hidden="true" size={18} />
-                    )}
-                    Save
-                  </button>
-                  <button
-                    aria-label="Delete agent"
-                    className="danger"
-                    onClick={() => setDeleteProjectTarget(selectedProject)}
-                    title="Delete agent"
-                    type="button"
-                  >
-                    <Trash2 aria-hidden="true" size={18} />
-                  </button>
-                </div>
-              </form>
-            </section>
-          </>
-        ) : (
-          <EmptyWorkspace />
-        )}
-      </aside>
-      </div>
+              <button
+                aria-label="Close settings"
+                className="icon-button"
+                onClick={() => setIsSettingsOpen(false)}
+                title="Close settings"
+                type="button"
+              >
+                <X aria-hidden="true" size={18} />
+              </button>
+            </div>
+            <form className="stack" onSubmit={handleSaveSettings}>
+              <label>
+                <span>Name</span>
+                <input
+                  onChange={(event) =>
+                    setSettingsDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  value={settingsDraft.name}
+                />
+              </label>
+              <label>
+                <span>Description</span>
+                <textarea
+                  onChange={(event) =>
+                    setSettingsDraft((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                  rows={3}
+                  value={settingsDraft.description}
+                />
+              </label>
+              <label>
+                <span>Instructions</span>
+                <textarea
+                  className="prompt-box"
+                  onChange={(event) => setPromptDraft(event.target.value)}
+                  placeholder="Set the agent's role, tone, and rules."
+                  rows={7}
+                  value={promptDraft}
+                />
+              </label>
+              <div className="button-row">
+                <button className="secondary" disabled={isSavingSettings} type="submit">
+                  {isSavingSettings ? (
+                    <Loader2 aria-hidden="true" className="spin" size={18} />
+                  ) : (
+                    <Save aria-hidden="true" size={18} />
+                  )}
+                  Save
+                </button>
+                <button
+                  aria-label="Delete agent"
+                  className="danger"
+                  onClick={() => setDeleteProjectTarget(selectedProject)}
+                  title="Delete agent"
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" size={18} />
+                </button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      ) : null}
+
+      {toastMessage ? (
+        <div aria-live="polite" className="toast-region">
+          <div className="toast success">
+            <Save aria-hidden="true" size={18} />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      ) : null}
+
+      {isLogoutConfirmOpen ? (
+        <div
+          aria-labelledby="logout-title"
+          aria-modal="true"
+          className="modal-backdrop"
+          role="dialog"
+        >
+          <section className="modal-panel">
+            <div className="modal-icon">
+              <LogOut aria-hidden="true" size={22} />
+            </div>
+            <div className="modal-copy">
+              <h2 id="logout-title">Log out?</h2>
+              <p>You will need to sign in again to access this workspace.</p>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="secondary"
+                onClick={() => setIsLogoutConfirmOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button className="primary" onClick={handleConfirmLogout} type="button">
+                <LogOut aria-hidden="true" size={18} />
+                Log out
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {deleteProjectTarget ? (
         <div

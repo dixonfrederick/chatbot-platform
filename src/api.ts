@@ -73,6 +73,27 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return payload as T
 }
 
+async function requestFile(path: string, token: string): Promise<Blob> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+
+    throw new ApiError(
+      payload.error || 'File request failed.',
+      response.status,
+      payload.detail,
+      payload,
+    )
+  }
+
+  return response.blob()
+}
+
 export const api = {
   health: () => request<Health>('/health'),
   login: (body: { email: string; password: string }) =>
@@ -154,4 +175,6 @@ export const api = {
       token,
     })
   },
+  fileBlob: (token: string, projectId: number, fileId: number) =>
+    requestFile(`/projects/${projectId}/files/${fileId}/content`, token),
 }

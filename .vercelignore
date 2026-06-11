@@ -1,0 +1,17 @@
+node_modules
+dist
+logs
+data
+uploads
+.env
+.env.*
+*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.DS_Store
+.idea
+.vscode

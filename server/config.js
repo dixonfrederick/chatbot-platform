@@ -23,6 +23,7 @@ export const config = {
   openaiModel: process.env.OPENAI_MODEL || 'gpt-5-mini',
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
   openRouterModel: process.env.OPENROUTER_MODEL || 'openai/gpt-oss-20b:free',
+  openRouterVisionModel: process.env.OPENROUTER_VISION_MODEL || 'openrouter/free',
   port: Number(process.env.PORT || 4000),
 }
 

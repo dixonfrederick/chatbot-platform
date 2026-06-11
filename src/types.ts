@@ -33,6 +33,7 @@ export type Message = {
   model: string
   response_id: string
   created_at: string
+  attachments?: FileRecord[]
 }
 
 export type Prompt = {
@@ -46,12 +47,14 @@ export type Prompt = {
 export type FileRecord = {
   id: number
   project_id: number
+  message_id: number | null
   original_name: string
   mime_type: string
   size: number
   openai_file_id: string
   upload_error: string
   created_at: string
+  preview_url?: string
 }
 
 export type ChatRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'

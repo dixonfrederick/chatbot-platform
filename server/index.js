@@ -141,7 +141,7 @@ async function projectSummaryRows(userId) {
 }
 
 async function getMessages(projectId, userId) {
-  return db.all(
+  const messages = await db.all(
     `
         SELECT id, project_id, role, content, provider, model, response_id, created_at
         FROM messages
@@ -150,6 +150,63 @@ async function getMessages(projectId, userId) {
       `,
     [projectId, userId],
   )
+
+  return hydrateMessages(projectId, userId, messages)
+}
+
+function attachmentNamesFromContent(content) {
+  const match = String(content || '').match(/\n{2,}Attached:\s*(.+)$/)
+
+  if (!match) {
+    return []
+  }
+
+  return match[1]
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+}
+
+async function hydrateMessages(projectId, userId, messages) {
+  if (messages.length === 0) {
+    return []
+  }
+
+  const files = await getFiles(projectId, userId, { order: 'ASC' })
+  const filesByMessageId = new Map()
+  const unlinkedFiles = []
+
+  for (const file of files) {
+    if (file.message_id) {
+      const messageId = Number(file.message_id)
+      filesByMessageId.set(messageId, [...(filesByMessageId.get(messageId) || []), file])
+    } else {
+      unlinkedFiles.push(file)
+    }
+  }
+
+  const legacyFileIds = new Set()
+
+  return messages.map((message) => {
+    const attachments = [...(filesByMessageId.get(Number(message.id)) || [])]
+    const legacyNames = attachmentNamesFromContent(message.content)
+
+    for (const fileName of legacyNames) {
+      const legacyFile = unlinkedFiles.find(
+        (file) => !legacyFileIds.has(file.id) && file.original_name === fileName,
+      )
+
+      if (legacyFile) {
+        legacyFileIds.add(legacyFile.id)
+        attachments.push(legacyFile)
+      }
+    }
+
+    return {
+      ...message,
+      attachments,
+    }
+  })
 }
 
 async function getLatestRun(projectId, userId) {
@@ -279,13 +336,15 @@ function isAbortError(error) {
   return error?.name === 'AbortError' || error?.name === 'APIUserAbortError' || message.includes('aborted')
 }
 
-async function getFiles(projectId, userId) {
+async function getFiles(projectId, userId, options = {}) {
+  const order = options.order === 'ASC' ? 'ASC' : 'DESC'
+
   return db.all(
     `
-        SELECT id, project_id, original_name, mime_type, size, openai_file_id, upload_error, created_at
+        SELECT id, project_id, message_id, original_name, mime_type, size, openai_file_id, upload_error, created_at
         FROM files
         WHERE project_id = ? AND user_id = ?
-        ORDER BY id DESC
+        ORDER BY id ${order}
       `,
     [projectId, userId],
   )
@@ -309,7 +368,7 @@ function deleteUploadedFile(file) {
   }
 }
 
-async function persistUploadedFile(projectId, userId, file) {
+async function persistUploadedFile(projectId, userId, file, messageId = null) {
   let openaiFileId = ''
   let uploadError = ''
 
@@ -324,6 +383,7 @@ async function persistUploadedFile(projectId, userId, file) {
         INSERT INTO files (
           project_id,
           user_id,
+          message_id,
           original_name,
           stored_name,
           mime_type,
@@ -331,11 +391,12 @@ async function persistUploadedFile(projectId, userId, file) {
           openai_file_id,
           upload_error
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     [
       projectId,
       userId,
+      messageId,
       file.originalname,
       file.filename,
       file.mimetype,
@@ -345,7 +406,14 @@ async function persistUploadedFile(projectId, userId, file) {
     ],
   )
 
-  return db.get('SELECT * FROM files WHERE id = ?', [result.lastInsertRowid])
+  return db.get(
+    `
+      SELECT id, project_id, message_id, original_name, mime_type, size, openai_file_id, upload_error, created_at
+      FROM files
+      WHERE id = ?
+    `,
+    [result.lastInsertRowid],
+  )
 }
 
 app.get('/api/health', (_req, res) => {
@@ -631,21 +699,12 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
 
     const history = await getMessages(projectId, req.user.id)
     const files = await getFiles(projectId, req.user.id)
-    savedFiles = []
-
-    for (const file of uploadedFiles) {
-      savedFiles.push(await persistUploadedFile(projectId, req.user.id, file))
-    }
-
-    const attachmentLabel = uploadedFiles.length
-      ? `\n\nAttached: ${uploadedFiles.map((file) => file.originalname).join(', ')}`
-      : ''
     const userResult = await db.run(
       `
         INSERT INTO messages (project_id, user_id, role, content, provider)
         VALUES (?, ?, 'user', ?, 'user')
       `,
-      [projectId, req.user.id, `${message}${attachmentLabel}`],
+      [projectId, req.user.id, message],
     )
 
     await db.run(
@@ -656,7 +715,16 @@ app.post('/api/projects/:projectId/chat', requireAuth, upload.array('files', 5),
       `,
       [userResult.lastInsertRowid, runId, req.user.id],
     )
-    userMessage = await db.get('SELECT * FROM messages WHERE id = ?', [userResult.lastInsertRowid])
+    savedFiles = []
+
+    for (const file of uploadedFiles) {
+      savedFiles.push(await persistUploadedFile(projectId, req.user.id, file, userResult.lastInsertRowid))
+    }
+
+    userMessage = {
+      ...(await db.get('SELECT * FROM messages WHERE id = ?', [userResult.lastInsertRowid])),
+      attachments: savedFiles,
+    }
 
     const reply = await createAssistantReply({
       attachments: uploadedFiles,
@@ -778,6 +846,49 @@ app.get('/api/projects/:projectId/files', requireAuth, async (req, res) => {
   }
 
   return res.json({ files: await getFiles(projectId, req.user.id) })
+})
+
+app.get('/api/projects/:projectId/files/:fileId/content', requireAuth, async (req, res, next) => {
+  const projectId = Number(req.params.projectId)
+  const fileId = Number(req.params.fileId)
+  const project = await getProjectForUser(projectId, req.user.id)
+
+  if (!project) {
+    return res.status(404).json({ error: 'Project not found.' })
+  }
+
+  const file = await db.get(
+    `
+      SELECT id, project_id, user_id, original_name, stored_name, mime_type, size
+      FROM files
+      WHERE id = ? AND project_id = ? AND user_id = ?
+    `,
+    [fileId, projectId, req.user.id],
+  )
+
+  if (!file) {
+    return res.status(404).json({ error: 'File not found.' })
+  }
+
+  const uploadsRoot = path.resolve(config.uploadsDir)
+  const filePath = path.resolve(config.uploadsDir, file.stored_name)
+
+  if (!filePath.startsWith(`${uploadsRoot}${path.sep}`)) {
+    return res.status(404).json({ error: 'File not found.' })
+  }
+
+  res.setHeader('Content-Type', file.mime_type || 'application/octet-stream')
+  res.setHeader('Content-Length', String(file.size || 0))
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${String(file.original_name).replaceAll('"', '')}"`,
+  )
+
+  return res.sendFile(filePath, (error) => {
+    if (error && !res.headersSent) {
+      next(error)
+    }
+  })
 })
 
 app.post('/api/projects/:projectId/files', requireAuth, upload.single('file'), async (req, res) => {

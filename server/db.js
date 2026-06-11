@@ -80,6 +80,7 @@ async function createPostgresDb() {
       id SERIAL PRIMARY KEY,
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
       original_name TEXT NOT NULL,
       stored_name TEXT NOT NULL,
       mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
@@ -112,6 +113,13 @@ async function createPostgresDb() {
     CREATE INDEX IF NOT EXISTS idx_files_project_id ON files(project_id);
     CREATE INDEX IF NOT EXISTS idx_chat_runs_project_id ON chat_runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_chat_runs_status ON chat_runs(status);
+  `)
+
+  await pool.query(`
+    ALTER TABLE files
+    ADD COLUMN IF NOT EXISTS message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id);
   `)
 
   return {
@@ -193,6 +201,7 @@ async function createSqliteDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
+      message_id INTEGER,
       original_name TEXT NOT NULL,
       stored_name TEXT NOT NULL,
       mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
@@ -201,7 +210,8 @@ async function createSqliteDb() {
       upload_error TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS chat_runs (
@@ -232,6 +242,14 @@ async function createSqliteDb() {
     CREATE INDEX IF NOT EXISTS idx_chat_runs_project_id ON chat_runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_chat_runs_status ON chat_runs(status);
   `)
+
+  const fileColumns = sqlite.prepare('PRAGMA table_info(files)').all().map((column) => column.name)
+
+  if (!fileColumns.includes('message_id')) {
+    sqlite.exec('ALTER TABLE files ADD COLUMN message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL')
+  }
+
+  sqlite.exec('CREATE INDEX IF NOT EXISTS idx_files_message_id ON files(message_id)')
 
   return {
     dialect: 'sqlite',
